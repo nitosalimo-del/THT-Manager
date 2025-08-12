@@ -4,7 +4,9 @@ Validierungslogik für den THT-Produktmanager
 import socket
 import re
 from typing import Any, Optional
+
 from exceptions import ValidationError
+from config import Config
 
 class Validator:
     """Zentrale Validierungsklasse"""
@@ -56,6 +58,11 @@ class Validator:
             return float(value) if value else 0.0
         except ValueError:
             raise ValidationError(f"Feld '{field_name}' muss eine Zahl sein")
+
+    @staticmethod
+    def validate_af_field(field: str) -> bool:
+        """Validiert, ob ein AF-Feld zulässig ist"""
+        return isinstance(field, str) and field in Config.AF_FIELDS
     
     @staticmethod
     def validate_password(password: str, expected: str) -> bool:
