@@ -68,6 +68,10 @@ class ThreadManager:
             
             # Liste der Threads bereinigen
             self.threads = [t for t in self.threads if t.is_alive()]
+
+    def shutdown(self) -> None:
+        """Kompatibilitätsmethode zum Beenden aller Threads"""
+        self.stop_all_threads()
     
     def get_active_threads(self) -> List[threading.Thread]:
         """Gibt alle aktiven Threads zurück"""
