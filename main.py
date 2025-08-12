@@ -80,9 +80,10 @@ class ProduktManagerApp(ctk.CTk):
         
         # Daten laden
         self._load_initial_data()
-        
+
         # Verbindungen testen
-        self._test_connections()
+        # Verzögerung einbauen, damit die GUI zuerst erscheint
+        self.after(100, self._test_connections)
         
         self.logger.info("THT-Produktmanager erfolgreich gestartet")
     
