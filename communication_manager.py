@@ -249,7 +249,7 @@ class ListenerMode:
     
     def is_running(self) -> bool:
         """Prüft ob Listener läuft"""
-        return self.running and self.listener_thread and self.listener_thread.is_alive()
+        return bool(self.running and self.listener_thread and self.listener_thread.is_alive())
     
     def _listener_loop(self):
         """Haupt-Listener-Schleife"""
