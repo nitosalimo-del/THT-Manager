@@ -9,11 +9,9 @@ Die Anwendung ist ein THT‑Produktmanager mit einer grafischen Oberfläche (GUI
 
     Methode get_all_fields() liefert die Reihenfolge der Felder für Formulare und die Datenbank.
 
-2. exceptions.py / exeptions.py
+2. exceptions.py
 
     Definiert projektspezifische Fehlerklassen (DatabaseError, CommunicationError, ValidationError usw.), von denen alle anderen Module erben können.
-
-    (Es gibt zwei nahezu identische Dateien – Tippfehler im Namen. Zum Lernen reicht eine.)
 
 3. validation.py
 
