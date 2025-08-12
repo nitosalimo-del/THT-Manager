@@ -274,6 +274,8 @@ class SidebarManager(BaseUIComponent):
         self.admin_mode = False
         self.product_buttons = []
         self.create_sidebar()
+        # Listener-Buttons initialisieren (Start sichtbar, Stop versteckt)
+        self.set_listener_active(False)
     
     def create_sidebar(self):
         """Erstellt die Seitenleiste"""
@@ -309,15 +311,16 @@ class SidebarManager(BaseUIComponent):
             self.widgets[btn_name] = btn
         
         # Listener-Buttons
-        listener_buttons = [
-            ("listener_start_btn", "Listener Mode starten"),
-            ("listener_stop_btn", "Listener Mode stoppen")
-        ]
-        
-        for btn_name, btn_text in listener_buttons:
-            btn = ctk.CTkButton(self.sidebar, text=btn_text)
-            btn.pack(pady=5)
-            self.widgets[btn_name] = btn
+        self.widgets["listener_start_btn"] = ctk.CTkButton(
+            self.sidebar, text="Listener Mode starten"
+        )
+        self.widgets["listener_start_btn"].pack(pady=5)
+
+        self.widgets["listener_stop_btn"] = ctk.CTkButton(
+            self.sidebar, text="Listener Mode stoppen"
+        )
+        # Stop-Button zunächst verstecken
+        self.widgets["listener_stop_btn"].pack_forget()
     
     def populate_products(self, products: List[Any], click_callback: Callable):
         """Füllt die Produktliste"""
@@ -330,8 +333,8 @@ class SidebarManager(BaseUIComponent):
         for idx, product in enumerate(products):
             btn_text = f"{product['Laufende Nummer']}: {product['Produktnummer']}"
             btn = ctk.CTkButton(
-                self.product_listbox, 
-                text=btn_text, 
+                self.product_listbox,
+                text=btn_text,
                 width=180
             )
             btn.configure(command=lambda i=idx: click_callback(i))
@@ -352,6 +355,21 @@ class SidebarManager(BaseUIComponent):
             for btn_name in ["new_btn", "delete_btn", "logout_btn"]:
                 self.widgets[btn_name].pack_forget()
             self.widgets["login_btn"].pack(pady=5)
+
+    def set_listener_active(self, active: bool) -> None:
+        """Aktualisiert Sichtbarkeit der Listener-Steuerungsbuttons"""
+        start_btn = self.widgets.get("listener_start_btn")
+        stop_btn = self.widgets.get("listener_stop_btn")
+
+        if not start_btn or not stop_btn:
+            return
+
+        if active:
+            start_btn.pack_forget()
+            stop_btn.pack(pady=5)
+        else:
+            stop_btn.pack_forget()
+            start_btn.pack(pady=5)
 
 class StatusManager(BaseUIComponent):
     """Verwaltet Statusanzeigen"""
