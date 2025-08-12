@@ -6,7 +6,7 @@ import logging
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 from config import Config
-from exceptions import DatabaseError
+from exceptions import DatabaseError, ValidationError
 from validation import Validator
 
 logger = logging.getLogger(__name__)
