@@ -1,5 +1,5 @@
 """
-THT-Produktmanager Version 2.0 (Optimiert)
+THT-Produktmanager Version 2.0 
 Hauptdatei mit verbesserter Architektur
 """
 import customtkinter as ctk
@@ -18,6 +18,311 @@ from database_manager import DatabaseManager
 from communication_manager import LimaClient, RobotCommunicator, ListenerMode
 from ui_manager import FormManager, SidebarManager, StatusManager, MessageHandler
 from thread_manager import ThreadManager, SafeTimer
+
+# Zusätzliche Imports für die Hauptdatei
+from enhanced_listener_ui import ListenerLogWindow
+
+# Diese Methoden müssen in der ProduktManagerApp-Klasse geändert/hinzugefügt werden:
+
+def _start_listener_mode(self):
+    """Startet den erweiterten Listener-Modus mit Nachrichtenverfolgung"""
+    if self.listener_mode and self.listener_mode.is_running():
+        self.message_handler.show_warning("Hinweis", "Listener-Modus läuft bereits")
+        return
+    
+    try:
+        # Listener-Konfiguration
+        listen_port = int(self.listener_port_entry.get())
+        send_ip = self.send_ip_entry.get()
+        send_port = int(self.send_port_entry.get())
+        
+        # Listener-Modus starten
+        self.listener_mode = ListenerMode(listen_port, send_ip, send_port)
+        success = self.listener_mode.start(
+            self._handle_listener_message,
+            self._on_listener_log_event  # Neuer Log-Callback
+        )
+        
+        if success:
+            self.listener_start_time = time.time()
+            self._show_listener_log_window()  # Neue Fenster-Methode
+            
+            self.sidebar_manager.set_listener_active(True)
+            self.message_handler.show_info("Listener gestartet", f"Lauscht auf Port {listen_port}")
+            self.logger.info(f"Listener-Modus gestartet auf Port {listen_port}")
+        else:
+            self.message_handler.show_error("Fehler", "Listener-Modus konnte nicht gestartet werden")
+    
+    except Exception as e:
+        self.logger.error(f"Fehler beim Starten des Listener-Modus: {e}")
+        self.message_handler.show_error("Fehler", f"Listener-Modus fehlgeschlagen: {e}")
+
+def _show_listener_log_window(self):
+    """Zeigt das erweiterte Listener-Log-Fenster"""
+    if hasattr(self, 'listener_log_window') and self.listener_log_window:
+        try:
+            self.listener_log_window.destroy()
+        except:
+            pass
+    
+    # Neues Log-Fenster erstellen
+    self.listener_log_window = ListenerLogWindow(self)
+    self.listener_popup = self.listener_log_window  # Kompatibilität
+
+def _on_listener_log_event(self, event: Dict[str, Any]):
+    """Callback für Listener-Log-Events"""
+    try:
+        # Event an Log-Fenster weiterleiten
+        if hasattr(self, 'listener_log_window') and self.listener_log_window:
+            if self.listener_log_window.winfo_exists():
+                self.listener_log_window.after(0, lambda: self.listener_log_window.add_log_entry(event))
+        
+        # Optional: Events auch in normales Log schreiben
+        event_type = event.get('type', '')
+        message = event.get('message', '')
+        source = event.get('source', '')
+        
+        if event_type in ['MESSAGE_RECEIVED', 'MESSAGE_SENT']:
+            self.logger.info(f"Listener [{event_type}] von {source}: {message}")
+    
+    except Exception as e:
+        self.logger.error(f"Fehler im Listener-Log-Event: {e}")
+
+def _stop_listener_mode(self):
+    """Stoppt den erweiterten Listener-Modus"""
+    if self.listener_mode:
+        self.listener_mode.stop()
+        self.listener_mode = None
+    
+    if hasattr(self, 'listener_log_window') and self.listener_log_window:
+        try:
+            self.listener_log_window.destroy()
+        except:
+            pass
+        self.listener_log_window = None
+    
+    # Alte Popup-Referenz auch löschen
+    if hasattr(self, 'listener_popup'):
+        self.listener_popup = None
+    
+    self.listener_start_time = None
+    self.sidebar_manager.set_listener_active(False)
+    
+    self.message_handler.show_info("Listener gestoppt", "Listener-Modus wurde beendet")
+    self.logger.info("Listener-Modus gestoppt")
+
+def _handle_listener_message(self, message: str, sender_ip: str):
+    """Erweiterte Behandlung empfangener Listener-Nachrichten"""
+    try:
+        self.logger.info(f"Listener-Nachricht von {sender_ip}: {message}")
+        
+        # Verschiedene Nachrichtentypen verarbeiten
+        if message.startswith("LOAD_PRODUCT:"):
+            product_number = message.split(":", 1)[1].strip()
+            self.after(0, lambda: self._load_product_by_number(product_number))
+            
+        elif message.startswith("GET_AF_VALUES"):
+            self.after(0, lambda: self._get_all_af_values())
+            
+        elif message.startswith("TRIGGER"):
+            self.after(0, lambda: self._send_trigger())
+            
+        elif message.startswith("AUTOFOCUS"):
+            self.after(0, lambda: self._start_autofocus())
+            
+        elif message.startswith("GET_POSITION"):
+            self.after(0, lambda: self._get_current_robot_position())
+            
+        elif message.startswith("SAVE_PRODUCT"):
+            self.after(0, lambda: self._save_product())
+            
+        # LIMA-Kommandos direkt weiterleiten
+        elif message.startswith("<LIMA") or message.startswith("<T/>"):
+            self.after(0, lambda: self._forward_lima_command(message, sender_ip))
+            
+        # JSON-Nachrichten verarbeiten
+        elif message.startswith("{"):
+            self.after(0, lambda: self._handle_json_message(message, sender_ip))
+            
+        else:
+            self.logger.warning(f"Unbekannte Listener-Nachricht: {message}")
+            
+    except Exception as e:
+        self.logger.error(f"Fehler beim Verarbeiten der Listener-Nachricht: {e}")
+
+def _forward_lima_command(self, lima_command: str, sender_ip: str):
+    """Leitet LIMA-Kommandos direkt weiter"""
+    try:
+        if not self.lima_client:
+            self.logger.error("LIMA-Client nicht verfügbar für Kommando-Weiterleitung")
+            return
+        
+        # Kommando an LIMA senden
+        response = self.lima_client.send_command(lima_command)
+        
+        # Antwort zurück an Sender schicken (falls Listener-Mode)
+        if self.listener_mode and response:
+            success = self.listener_mode.send_message(response)
+            if success:
+                self.logger.info(f"LIMA-Response an {sender_ip} gesendet: {response}")
+            else:
+                self.logger.error(f"Fehler beim Senden der LIMA-Response an {sender_ip}")
+                
+    except Exception as e:
+        self.logger.error(f"Fehler beim Weiterleiten des LIMA-Kommandos: {e}")
+
+def _handle_json_message(self, json_message: str, sender_ip: str):
+    """Verarbeitet JSON-Nachrichten"""
+    try:
+        import json
+        data = json.loads(json_message)
+        
+        command = data.get('command')
+        params = data.get('params', {})
+        
+        if command == 'load_product':
+            product_id = params.get('product_id')
+            if product_id:
+                self._load_product_by_number(str(product_id))
+                
+        elif command == 'get_product_data':
+            # Aktuelles Produkt als JSON zurücksenden
+            if self.selected_product:
+                response_data = {
+                    'status': 'success',
+                    'data': dict(self.selected_product)
+                }
+                if self.listener_mode:
+                    self.listener_mode.send_message(json.dumps(response_data))
+                    
+        elif command == 'set_field_value':
+            field = params.get('field')
+            value = params.get('value')
+            if field and value is not None:
+                self._update_form_field(field, str(value))
+                
+        else:
+            self.logger.warning(f"Unbekanntes JSON-Kommando: {command}")
+            
+    except json.JSONDecodeError as e:
+        self.logger.error(f"Fehler beim Parsen der JSON-Nachricht: {e}")
+    except Exception as e:
+        self.logger.error(f"Fehler beim Verarbeiten der JSON-Nachricht: {e}")
+
+def _get_current_robot_position(self):
+    """Holt aktuelle Roboter-Position und sendet sie zurück"""
+    try:
+        if not self.robot_communicator:
+            self.logger.error("Robot-Communicator nicht verfügbar")
+            return
+        
+        position = self.robot_communicator.get_current_position()
+        if position and self.listener_mode:
+            # Position als JSON zurücksenden
+            import json
+            position_data = {
+                'status': 'success',
+                'position': {
+                    'x': position[0],
+                    'y': position[1], 
+                    'z': position[2]
+                }
+            }
+            self.listener_mode.send_message(json.dumps(position_data))
+            
+    except Exception as e:
+        self.logger.error(f"Fehler beim Abrufen der Roboter-Position: {e}")
+
+def _test_lima_connection(self):
+    """Erweiterte LIMA-Verbindungstest mit besserer Fehlerbehandlung"""
+    if not self.lima_client:
+        self._update_lima_clients()
+    
+    if self.lima_client:
+        try:
+            connected = self.lima_client.test_connection()
+            
+            # Zusätzlicher Test mit einfachem Kommando
+            if connected:
+                try:
+                    # Teste mit Device-Status-Abfrage
+                    test_response = self.lima_client.send_command('<LIMA DIR="Request" CMD="Device_GetStatus"/>')
+                    if test_response and 'ReplyOk' in test_response:
+                        connected = True
+                        self.logger.info(f"LIMA-Test erfolgreich: {test_response}")
+                    else:
+                        connected = False
+                        self.logger.warning(f"LIMA-Test fehlgeschlagen: {test_response}")
+                except Exception as e:
+                    self.logger.warning(f"LIMA-Kommando-Test fehlgeschlagen: {e}")
+                    # Verbindung ist da, aber Kommandos funktionieren nicht
+                    connected = "partial"
+            
+            self.status_manager.update_lima_status(connected)
+            
+            if hasattr(self, 'lima_status_label'):
+                if connected == True:
+                    self.lima_status_label.configure(text="Status: ✅ Verbunden & Bereit", text_color="green")
+                elif connected == "partial":
+                    self.lima_status_label.configure(text="Status: ⚠️ Verbunden (Teilweise)", text_color="orange")
+                else:
+                    self.lima_status_label.configure(text="Status: ❌ Getrennt", text_color="red")
+            
+            if connected == True:
+                self.message_handler.show_info("Verbindung erfolgreich", "LIMA-Verbindung hergestellt und getestet")
+            elif connected == "partial":
+                self.message_handler.show_warning("Verbindung teilweise", "LIMA erreichbar, aber Kommandos fehlerhaft")
+            else:
+                self.message_handler.show_warning("Verbindung fehlgeschlagen", "LIMA nicht erreichbar")
+        
+        except CommunicationError as e:
+            self.message_handler.show_error("Verbindungsfehler", str(e))
+            self.status_manager.update_lima_status(False)
+            if hasattr(self, 'lima_status_label'):
+                self.lima_status_label.configure(text="Status: ❌ Fehler", text_color="red")
+
+# Änderung in der _on_closing Methode:
+def _on_closing(self):
+    """Erweiterte Cleanup-Funktion beim Schließen"""
+    try:
+        self.logger.info("Anwendung wird beendet...")
+        
+        # Listener-Modus stoppen
+        if self.listener_mode:
+            self.listener_mode.stop()
+        
+        # Listener-Fenster schließen
+        if hasattr(self, 'listener_log_window') and self.listener_log_window:
+            try:
+                self.listener_log_window.destroy()
+            except:
+                pass
+        
+        # Timer stoppen (falls vorhanden)
+        if hasattr(self, 'listener_timer') and self.listener_timer:
+            if hasattr(self.listener_timer, 'stop'):
+                self.listener_timer.stop()
+            elif hasattr(self.listener_timer, 'cancel'):
+                self.listener_timer.cancel()
+        
+        # Threads beenden
+        self.thread_manager.shutdown()
+        
+        # Datenbankverbindung schließen
+        if hasattr(self.db_manager, 'close'):
+            self.db_manager.close()
+        
+        # LIMA-Verbindung schließen
+        if self.lima_client:
+            self.lima_client.close()
+        
+        self.logger.info("Cleanup abgeschlossen")
+        
+    except Exception as e:
+        self.logger.error(f"Fehler beim Cleanup: {e}")
+    
+    finally:
+        self.destroy()
 
 # Logging konfigurieren
 def setup_logging():

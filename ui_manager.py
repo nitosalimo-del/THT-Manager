@@ -458,3 +458,4 @@ class MessageHandler:
         result = dialog.get_input()
         logger.info(f"Input Dialog '{title}': {'Eingabe erhalten' if result else 'Abgebrochen'}")
         return result
+    

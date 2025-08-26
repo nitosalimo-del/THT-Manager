@@ -1,6 +1,5 @@
 """
-Communication Manager - Korrigierte Version
-Behebt den Syntaxfehler in Zeile 255
+Communication Manager - Verbesserte Version mit korrektem LIMA-Protokoll
 """
 import socket
 import threading
@@ -8,13 +7,16 @@ import time
 import logging
 from typing import Optional, Dict, Any, Callable, Tuple, List
 import json
+import xml.etree.ElementTree as ET
+from datetime import datetime
 
 from exceptions import CommunicationError, ValidationError
 from validation import Validator
+from config import Config
 
 
 class LimaClient:
-    """Client für LIMA-Kommunikation"""
+    """Client für LIMA-Kommunikation mit korrektem XML-Protokoll"""
     
     def __init__(self, host: str, port: int, timeout: float = 5.0):
         self.host = host
@@ -35,16 +37,17 @@ class LimaClient:
             return False
     
     def send_command(self, command: str) -> Optional[str]:
-        """Sendet Kommando an LIMA und wartet auf Antwort"""
+        """Sendet LIMA-Kommando und wartet auf Antwort"""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(self.timeout)
                 sock.connect((self.host, self.port))
                 
-                # Kommando senden
-                sock.send(command.encode('utf-8'))
+                # LIMA-Kommando mit Newline senden
+                full_command = command + "\n"
+                sock.send(full_command.encode('utf-8'))
                 
-                # Antwort empfangen
+                # Antwort empfangen (bis zu 4KB)
                 response = sock.recv(4096).decode('utf-8').strip()
                 self.logger.debug(f"LIMA Kommando: {command} -> Antwort: {response}")
                 
@@ -57,44 +60,75 @@ class LimaClient:
         except Exception as e:
             raise CommunicationError(f"Unerwarteter Fehler bei Kommando {command}: {e}")
     
+    def parse_lima_response(self, response: str) -> Dict[str, str]:
+        """Parst LIMA XML-Response"""
+        try:
+            # XML parsen
+            root = ET.fromstring(response)
+            
+            # Alle Attribute des LIMA-Tags extrahieren
+            attributes = dict(root.attrib)
+            
+            # Text-Inhalt falls vorhanden
+            if root.text:
+                attributes['TEXT'] = root.text.strip()
+            
+            return attributes
+        
+        except ET.XMLSyntaxError as e:
+            self.logger.error(f"XML-Parse-Fehler: {e}")
+            return {}
+        except Exception as e:
+            self.logger.error(f"Fehler beim Parsen der LIMA-Response: {e}")
+            return {}
+    
     def get_product_info(self, product_number: str) -> Optional[Dict[str, Any]]:
         """Holt Produktinformationen von LIMA"""
         try:
-            command = f"GET_PRODUCT_INFO:{product_number}"
+            # Beispiel-Kommando für Produktinfo (anzupassen je nach LIMA-Setup)
+            command = f'<LIMA CMD="Project_GetNode" DIR="Request" PATH="Module Application.Product.{product_number}" />'
             response = self.send_command(command)
             
-            if response and response.startswith("PRODUCT_INFO:"):
-                # JSON-Daten aus Response extrahieren
-                json_data = response[13:]  # "PRODUCT_INFO:" entfernen
-                return json.loads(json_data)
+            if response:
+                parsed = self.parse_lima_response(response)
+                if parsed.get('DIR') == 'ReplyOk' and 'VALUE' in parsed:
+                    # JSON-Daten aus VALUE extrahieren falls vorhanden
+                    try:
+                        return json.loads(parsed['VALUE'])
+                    except json.JSONDecodeError:
+                        # Falls kein JSON, als String-Wert zurückgeben
+                        return {'info': parsed['VALUE']}
             
             return None
         
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Fehler beim Parsen der Produktinfo: {e}")
-            return None
         except Exception as e:
             self.logger.error(f"Fehler beim Abrufen der Produktinfo: {e}")
             return None
     
     def close(self):
         """Schließt die Verbindung"""
-        # Hier könnte persistente Verbindung geschlossen werden
         pass
 
 
 class RobotCommunicator:
-    """Kommunikation mit dem Robot über LIMA"""
+    """Verbesserte Robot-Kommunikation mit korrekten LIMA-Kommandos"""
     
     def __init__(self, lima_client: LimaClient):
         self.lima_client = lima_client
         self.logger = logging.getLogger(__name__)
     
     def start_autofocus(self) -> bool:
-        """Startet den Autofokus"""
+        """Startet den Autofokus mit korrektem LIMA-Kommando"""
         try:
-            response = self.lima_client.send_command("START_AUTOFOCUS")
-            return response == "AUTOFOCUS_STARTED"
+            # Autofokus auf "Once" setzen (Wert 1)
+            command = Config.LIMA_COMMANDS["autofocus"]
+            response = self.lima_client.send_command(command)
+            
+            if response:
+                parsed = self.lima_client.parse_lima_response(response)
+                return parsed.get('DIR') == 'ReplyOk'
+            
+            return False
         
         except CommunicationError:
             raise
@@ -104,8 +138,8 @@ class RobotCommunicator:
     def send_trigger(self) -> bool:
         """Sendet Trigger-Signal"""
         try:
-            response = self.lima_client.send_command("SEND_TRIGGER")
-            return response == "TRIGGER_SENT"
+            response = self.lima_client.send_command("<T/>")
+            return response == "<TOk/>"
         
         except CommunicationError:
             raise
@@ -115,10 +149,13 @@ class RobotCommunicator:
     def get_focus_value(self) -> Optional[str]:
         """Holt aktuellen Fokuswert"""
         try:
-            response = self.lima_client.send_command("GET_FOCUS_VALUE")
+            command = Config.LIMA_COMMANDS["get_focus"]
+            response = self.lima_client.send_command(command)
             
-            if response and response.startswith("FOCUS_VALUE:"):
-                return response[12:]  # "FOCUS_VALUE:" entfernen
+            if response:
+                parsed = self.lima_client.parse_lima_response(response)
+                if parsed.get('DIR') == 'ReplyOk' and 'VALUE' in parsed:
+                    return parsed['VALUE']
             
             return None
         
@@ -128,17 +165,33 @@ class RobotCommunicator:
             raise CommunicationError(f"Fehler beim Abrufen des Fokuswerts: {e}")
     
     def get_af_value(self, field: str) -> Optional[str]:
-        """Holt spezifischen AF-Wert"""
+        """Holt spezifischen AF-Wert mit korrekten LIMA-Kommandos"""
         try:
             # Feld validieren
             if not Validator.validate_af_field(field):
                 raise ValueError(f"Ungültiges AF-Feld: {field}")
             
-            command = f"GET_AF_VALUE:{field}"
+            # Mapping von Feldnamen zu LIMA-Kommandos
+            command_mapping = {
+                "AF Breite": Config.LIMA_COMMANDS["af_width"],
+                "AF Höhe": Config.LIMA_COMMANDS["af_height"], 
+                "AF Tiefe": Config.LIMA_COMMANDS["af_depth"]
+            }
+            
+            command = command_mapping.get(field)
+            if not command:
+                raise ValueError(f"Kein LIMA-Kommando für Feld: {field}")
+            
             response = self.lima_client.send_command(command)
             
-            if response and response.startswith("AF_VALUE:"):
-                return response[9:]  # "AF_VALUE:" entfernen
+            if response:
+                parsed = self.lima_client.parse_lima_response(response)
+                if parsed.get('DIR') == 'ReplyOk' and 'VALUE' in parsed:
+                    return parsed['VALUE']
+                elif parsed.get('DIR') == 'ReplyError':
+                    error_msg = parsed.get('INFO', 'Unbekannter LIMA-Fehler')
+                    self.logger.error(f"LIMA-Fehler für {field}: {error_msg}")
+                    raise CommunicationError(f"LIMA-Fehler: {error_msg}")
             
             return None
         
@@ -152,12 +205,26 @@ class RobotCommunicator:
     def get_af_origin_xyz(self) -> Optional[Tuple[float, float, float]]:
         """Holt AF-Ursprung XYZ-Koordinaten"""
         try:
-            response = self.lima_client.send_command("GET_AF_ORIGIN_XYZ")
+            # X, Y, Z einzeln abrufen
+            x_cmd = Config.LIMA_COMMANDS["af_origin_x"]
+            y_cmd = Config.LIMA_COMMANDS["af_origin_y"]
+            z_cmd = Config.LIMA_COMMANDS["af_origin_z"]
             
-            if response and response.startswith("AF_ORIGIN_XYZ:"):
-                coords_str = response[14:]  # "AF_ORIGIN_XYZ:" entfernen
-                x, y, z = map(float, coords_str.split(","))
-                return (x, y, z)
+            x_response = self.lima_client.send_command(x_cmd)
+            y_response = self.lima_client.send_command(y_cmd)
+            z_response = self.lima_client.send_command(z_cmd)
+            
+            x_parsed = self.lima_client.parse_lima_response(x_response) if x_response else {}
+            y_parsed = self.lima_client.parse_lima_response(y_response) if y_response else {}
+            z_parsed = self.lima_client.parse_lima_response(z_response) if z_response else {}
+            
+            # Werte extrahieren
+            x_val = x_parsed.get('VALUE')
+            y_val = y_parsed.get('VALUE')
+            z_val = z_parsed.get('VALUE')
+            
+            if all([x_val, y_val, z_val]):
+                return (float(x_val), float(y_val), float(z_val))
             
             return None
         
@@ -169,14 +236,20 @@ class RobotCommunicator:
             raise CommunicationError(f"Fehler beim Abrufen der AF-Ursprung XYZ: {e}")
     
     def get_current_position(self) -> Optional[Tuple[float, float, float]]:
-        """Holt aktuelle Roboter-Position"""
+        """Holt aktuelle TCP-Position vom Robot"""
         try:
-            response = self.lima_client.send_command("GET_CURRENT_POSITION")
+            command = Config.LIMA_COMMANDS["get_tcp_pose"]
+            response = self.lima_client.send_command(command)
             
-            if response and response.startswith("CURRENT_POSITION:"):
-                pos_str = response[17:]  # "CURRENT_POSITION:" entfernen
-                x, y, z = map(float, pos_str.split(","))
-                return (x, y, z)
+            if response:
+                parsed = self.lima_client.parse_lima_response(response)
+                if parsed.get('DIR') == 'ReplyOk' and 'VALUE' in parsed:
+                    # TCP Pose Format: "X,Y,Z,RX,RY,RZ" - nur X,Y,Z nehmen
+                    pose_str = parsed['VALUE']
+                    pose_values = pose_str.split(',')
+                    if len(pose_values) >= 3:
+                        x, y, z = map(float, pose_values[:3])
+                        return (x, y, z)
             
             return None
         
@@ -189,7 +262,7 @@ class RobotCommunicator:
 
 
 class ListenerMode:
-    """Listener für eingehende Nachrichten von externen Systemen"""
+    """Erweiterte Listener-Klasse mit Nachrichtenverfolgung"""
     
     def __init__(self, listen_port: int, send_ip: str, send_port: int):
         self.listen_port = listen_port
@@ -201,15 +274,21 @@ class ListenerMode:
         self.running = False
         self.message_handler: Optional[Callable[[str, str], None]] = None
         
+        # Erweiterte Nachrichtenverfolgung
+        self.message_log: List[Dict[str, Any]] = []
+        self.log_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        
         self.logger = logging.getLogger(__name__)
     
-    def start(self, message_handler: Callable[[str, str], None]) -> bool:
-        """Startet den Listener"""
+    def start(self, message_handler: Callable[[str, str], None], 
+              log_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
+        """Startet den Listener mit optionalem Log-Callback"""
         if self.running:
             return False
         
         try:
             self.message_handler = message_handler
+            self.log_callback = log_callback
             
             # Server-Socket erstellen
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -223,6 +302,7 @@ class ListenerMode:
             self.listener_thread.start()
             
             self.logger.info(f"Listener gestartet auf Port {self.listen_port}")
+            self._log_event("LISTENER_STARTED", f"Listener auf Port {self.listen_port} gestartet", "SYSTEM")
             return True
         
         except Exception as e:
@@ -245,6 +325,7 @@ class ListenerMode:
             self.listener_thread.join(timeout=2.0)
         
         self.listener_thread = None
+        self._log_event("LISTENER_STOPPED", "Listener gestoppt", "SYSTEM")
         self.logger.info("Listener gestoppt")
     
     def is_running(self) -> bool:
@@ -268,7 +349,7 @@ class ListenerMode:
                 client_thread.start()
             
             except socket.timeout:
-                continue  # Timeout ist normal, einfach weitermachen
+                continue  # Timeout ist normal
             except Exception as e:
                 if self.running:  # Nur loggen wenn wir noch laufen sollten
                     self.logger.error(f"Fehler im Listener-Loop: {e}")
@@ -280,18 +361,26 @@ class ListenerMode:
             sender_ip = address[0]
             self.logger.info(f"Client verbunden: {sender_ip}")
             
-            # Nachricht empfangen - HIER WAR DER FEHLER: .strip() statt .strip
+            # Nachricht empfangen
             data = client_socket.recv(4096).decode("utf-8").strip()
             
-            if data and self.message_handler:
-                self.message_handler(data, sender_ip)
+            if data:
+                # Eingehende Nachricht loggen
+                self._log_event("MESSAGE_RECEIVED", data, sender_ip)
+                
+                if self.message_handler:
+                    self.message_handler(data, sender_ip)
                 
                 # Bestätigung senden
                 response = "MESSAGE_RECEIVED"
                 client_socket.send(response.encode("utf-8"))
+                
+                # Ausgehende Bestätigung loggen
+                self._log_event("RESPONSE_SENT", response, sender_ip)
         
         except Exception as e:
             self.logger.error(f"Fehler beim Behandeln des Clients {address}: {e}")
+            self._log_event("CLIENT_ERROR", f"Fehler: {e}", address[0])
         
         finally:
             try:
@@ -305,15 +394,54 @@ class ListenerMode:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(5.0)
                 sock.connect((self.send_ip, self.send_port))
+                
+                # Ausgehende Nachricht loggen
+                self._log_event("MESSAGE_SENT", message, self.send_ip)
+                
                 sock.send(message.encode("utf-8"))
                 
                 # Bestätigung empfangen
                 response = sock.recv(1024).decode("utf-8").strip()
+                
+                # Eingehende Bestätigung loggen
+                self._log_event("RESPONSE_RECEIVED", response, self.send_ip)
+                
                 return response == "MESSAGE_RECEIVED"
         
         except Exception as e:
             self.logger.error(f"Fehler beim Senden der Nachricht: {e}")
+            self._log_event("SEND_ERROR", f"Fehler: {e}", self.send_ip)
             return False
+    
+    def _log_event(self, event_type: str, message: str, source: str):
+        """Loggt ein Event mit Timestamp"""
+        event = {
+            'timestamp': datetime.now().strftime('%H:%M:%S.%f')[:-3],  # Mit Millisekunden
+            'type': event_type,
+            'message': message,
+            'source': source
+        }
+        
+        self.message_log.append(event)
+        
+        # Log-Callback aufrufen falls gesetzt
+        if self.log_callback:
+            try:
+                self.log_callback(event)
+            except Exception as e:
+                self.logger.error(f"Fehler im Log-Callback: {e}")
+        
+        # Log-Größe begrenzen (letzte 100 Einträge behalten)
+        if len(self.message_log) > 100:
+            self.message_log = self.message_log[-100:]
+    
+    def get_message_log(self) -> List[Dict[str, Any]]:
+        """Gibt das aktuelle Message-Log zurück"""
+        return self.message_log.copy()
+    
+    def clear_message_log(self):
+        """Leert das Message-Log"""
+        self.message_log.clear()
 
 
 class CobotCommunicator:
