@@ -200,31 +200,36 @@ class ListenerMode:
         self.listener_thread: Optional[threading.Thread] = None
         self.running = False
         self.message_handler: Optional[Callable[[str, str], None]] = None
-        
+        self.log_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.message_log: List[Dict[str, Any]] = []
+
         self.logger = logging.getLogger(__name__)
     
-    def start(self, message_handler: Callable[[str, str], None]) -> bool:
-        """Startet den Listener"""
+    def start(self, message_handler: Callable[[str, str], None],
+              log_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
+        """Startet den Listener mit optionalem Log-Callback"""
         if self.running:
             return False
-        
+
         try:
             self.message_handler = message_handler
-            
+            self.log_callback = log_callback
+
             # Server-Socket erstellen
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind(("", self.listen_port))
             self.server_socket.listen(5)
-            
+
             # Listener-Thread starten
             self.running = True
             self.listener_thread = threading.Thread(target=self._listener_loop, daemon=True)
             self.listener_thread.start()
-            
+
             self.logger.info(f"Listener gestartet auf Port {self.listen_port}")
+            self._log_event("LISTENER_STARTED", f"Listener auf Port {self.listen_port} gestartet", "SYSTEM")
             return True
-        
+
         except Exception as e:
             self.logger.error(f"Fehler beim Starten des Listeners: {e}")
             self.stop()
@@ -243,13 +248,34 @@ class ListenerMode:
         
         if self.listener_thread and self.listener_thread.is_alive():
             self.listener_thread.join(timeout=2.0)
-        
+
         self.listener_thread = None
         self.logger.info("Listener gestoppt")
+        self._log_event("LISTENER_STOPPED", "Listener gestoppt", "SYSTEM")
     
     def is_running(self) -> bool:
         """Prüft ob Listener läuft"""
         return bool(self.running and self.listener_thread and self.listener_thread.is_alive())
+
+    def _log_event(self, event_type: str, message: str, source: str) -> None:
+        event = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "type": event_type,
+            "message": message,
+            "source": source
+        }
+        self.message_log.append(event)
+        if self.log_callback:
+            try:
+                self.log_callback(event)
+            except Exception:
+                pass
+
+    def get_message_log(self) -> List[Dict[str, Any]]:
+        return list(self.message_log)
+
+    def clear_message_log(self) -> None:
+        self.message_log.clear()
     
     def _listener_loop(self):
         """Haupt-Listener-Schleife"""
@@ -279,19 +305,23 @@ class ListenerMode:
         try:
             sender_ip = address[0]
             self.logger.info(f"Client verbunden: {sender_ip}")
-            
+
             # Nachricht empfangen - HIER WAR DER FEHLER: .strip() statt .strip
             data = client_socket.recv(4096).decode("utf-8").strip()
-            
-            if data and self.message_handler:
-                self.message_handler(data, sender_ip)
-                
+
+            if data:
+                self._log_event("MESSAGE_RECEIVED", data, sender_ip)
+                if self.message_handler:
+                    self.message_handler(data, sender_ip)
+
                 # Bestätigung senden
                 response = "MESSAGE_RECEIVED"
                 client_socket.send(response.encode("utf-8"))
-        
+                self._log_event("RESPONSE_SENT", response, sender_ip)
+
         except Exception as e:
             self.logger.error(f"Fehler beim Behandeln des Clients {address}: {e}")
+            self._log_event("CLIENT_ERROR", str(e), str(address))
         
         finally:
             try:
@@ -306,13 +336,16 @@ class ListenerMode:
                 sock.settimeout(5.0)
                 sock.connect((self.send_ip, self.send_port))
                 sock.send(message.encode("utf-8"))
-                
+                self._log_event("MESSAGE_SENT", message, self.send_ip)
+
                 # Bestätigung empfangen
                 response = sock.recv(1024).decode("utf-8").strip()
+                self._log_event("RESPONSE_RECEIVED", response, self.send_ip)
                 return response == "MESSAGE_RECEIVED"
-        
+
         except Exception as e:
             self.logger.error(f"Fehler beim Senden der Nachricht: {e}")
+            self._log_event("SEND_ERROR", str(e), self.send_ip)
             return False
 
 

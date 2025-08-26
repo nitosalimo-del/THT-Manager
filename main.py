@@ -3,6 +3,7 @@ THT-Produktmanager Version 2.0 (Optimiert)
 Hauptdatei mit verbesserter Architektur
 """
 import customtkinter as ctk
+import tkinter as tk
 import logging
 import json
 import os
@@ -17,7 +18,14 @@ from validation import Validator
 from database_manager import DatabaseManager
 from communication_manager import LimaClient, RobotCommunicator, ListenerMode
 from ui_manager import FormManager, SidebarManager, StatusManager, MessageHandler
-from thread_manager import ThreadManager, SafeTimer
+from thread_manager import ThreadManager
+
+# Zusätzliche Imports für die Hauptdatei
+try:
+    from enhanced_listener_ui import ListenerLogWindow
+except ImportError as e:
+    print(f"Warnung: enhanced_listener_ui konnte nicht importiert werden: {e}")
+    ListenerLogWindow = None
 
 # Logging konfigurieren
 def setup_logging():
@@ -72,8 +80,8 @@ class ProduktManagerApp(ctk.CTk):
         # Listener Mode
         self.listener_mode: Optional[ListenerMode] = None
         self.listener_popup: Optional[ctk.CTkToplevel] = None
+        self.listener_log_window: Optional[ctk.CTkToplevel] = None
         self.listener_start_time: Optional[float] = None
-        self.listener_timer: Optional[SafeTimer] = None
         
         # UI-Manager initialisieren
         self._setup_ui_managers()
@@ -829,57 +837,111 @@ class ProduktManagerApp(ctk.CTk):
     # === Listener Mode ===
     
     def _start_listener_mode(self):
-        """Startet den Listener-Modus"""
+        """Startet den erweiterten Listener-Modus mit Nachrichtenverfolgung"""
         if self.listener_mode and self.listener_mode.is_running():
             self.message_handler.show_warning("Hinweis", "Listener-Modus läuft bereits")
             return
-        
+
         try:
             # Listener-Konfiguration
             listen_port = int(self.listener_port_entry.get())
             send_ip = self.send_ip_entry.get()
             send_port = int(self.send_port_entry.get())
-            
-            # Listener-Modus starten
+
+            # Listener-Modus starten mit BEIDEN Callbacks
             self.listener_mode = ListenerMode(listen_port, send_ip, send_port)
-            success = self.listener_mode.start(self._handle_listener_message)
-            
+            success = self.listener_mode.start(
+                self._handle_listener_message,
+                self._on_listener_log_event  # Log-Callback hinzufügen
+            )
+
             if success:
                 self.listener_start_time = time.time()
-                self._show_listener_popup()
-                self._start_listener_timer()
-                
+                self._show_listener_log_window()  # Korrigierter Methodenname
+
                 self.sidebar_manager.set_listener_active(True)
                 self.message_handler.show_info("Listener gestartet", f"Lauscht auf Port {listen_port}")
                 self.logger.info(f"Listener-Modus gestartet auf Port {listen_port}")
             else:
                 self.message_handler.show_error("Fehler", "Listener-Modus konnte nicht gestartet werden")
-        
+
         except Exception as e:
             self.logger.error(f"Fehler beim Starten des Listener-Modus: {e}")
             self.message_handler.show_error("Fehler", f"Listener-Modus fehlgeschlagen: {e}")
-    
+
+    def _show_listener_log_window(self):
+        """Zeigt das erweiterte Listener-Log-Fenster"""
+        try:
+            # Altes Fenster schließen falls vorhanden
+            if hasattr(self, 'listener_log_window') and self.listener_log_window:
+                try:
+                    if self.listener_log_window.winfo_exists():
+                        self.listener_log_window.destroy()
+                except:
+                    pass
+
+            # Import prüfen
+            if ListenerLogWindow is None:
+                self.logger.error("ListenerLogWindow nicht verfügbar - verwende Fallback")
+                self._show_listener_popup()  # Fallback zur alten Popup-Methode
+                return
+
+            # Neues Log-Fenster erstellen
+            self.listener_log_window = ListenerLogWindow(self)
+            self.listener_popup = self.listener_log_window  # Kompatibilität
+
+        except Exception as e:
+            self.logger.error(f"Fehler beim Erstellen des Listener-Fensters: {e}")
+            # Fallback zur alten Methode
+            self._show_listener_popup()
+
+    def _on_listener_log_event(self, event: Dict[str, Any]):
+        """Callback für Listener-Log-Events - Thread-sicher"""
+        try:
+            # Event an Log-Fenster weiterleiten - Thread-sicher
+            if hasattr(self, 'listener_log_window') and self.listener_log_window:
+                try:
+                    if self.listener_log_window.winfo_exists():
+                        # Verwende after() für Thread-sichere UI-Updates
+                        self.listener_log_window.after(0,
+                            lambda: self.listener_log_window.add_log_entry(event))
+                except tk.TclError:
+                    # Fenster wurde bereits zerstört
+                    pass
+
+            # Optional: Events auch in normales Log schreiben
+            event_type = event.get('type', '')
+            message = event.get('message', '')
+            source = event.get('source', '')
+
+            if event_type in ['MESSAGE_RECEIVED', 'MESSAGE_SENT']:
+                self.logger.info(f"Listener [{event_type}] von {source}: {message}")
+
+        except Exception as e:
+            self.logger.error(f"Fehler im Listener-Log-Event: {e}")
+
     def _stop_listener_mode(self):
         """Stoppt den Listener-Modus"""
         if self.listener_mode:
             self.listener_mode.stop()
             self.listener_mode = None
-        
-        if self.listener_timer:
-            # SafeTimer verwenden - falls vorhanden stop(), sonst cancel()
-            if hasattr(self.listener_timer, 'stop'):
-                self.listener_timer.stop()
-            elif hasattr(self.listener_timer, 'cancel'):
-                self.listener_timer.cancel()
-            self.listener_timer = None
-        
-        if self.listener_popup:
+
+        # Log-Fenster schließen
+        if hasattr(self, 'listener_log_window') and self.listener_log_window:
+            try:
+                if self.listener_log_window.winfo_exists():
+                    self.listener_log_window.destroy()
+            except:
+                pass
+            self.listener_log_window = None
+            self.listener_popup = None
+        elif self.listener_popup:
             self.listener_popup.destroy()
             self.listener_popup = None
-        
+
         self.listener_start_time = None
         self.sidebar_manager.set_listener_active(False)
-        
+
         self.message_handler.show_info("Listener gestoppt", "Listener-Modus wurde beendet")
         self.logger.info("Listener-Modus gestoppt")
     
@@ -892,25 +954,18 @@ class ProduktManagerApp(ctk.CTk):
         self.listener_popup.title("Listener-Modus aktiv")
         self.listener_popup.geometry("400x200")
         self.listener_popup.resizable(False, False)
-        
+
         # Popup zentrieren
         self.listener_popup.transient(self)
-        self.listener_popup.grab_set()
-        
+
         # Content
         status_label = ctk.CTkLabel(
-            self.listener_popup, 
+            self.listener_popup,
             text="🔊 Listener-Modus aktiv",
             font=("Arial", 16, "bold")
         )
         status_label.pack(pady=20)
-        
-        self.listener_time_label = ctk.CTkLabel(
-            self.listener_popup,
-            text="Laufzeit: 00:00:00"
-        )
-        self.listener_time_label.pack(pady=10)
-        
+
         port_label = ctk.CTkLabel(
             self.listener_popup,
             text=f"Port: {self.listener_port_entry.get()}"
@@ -930,27 +985,6 @@ class ProduktManagerApp(ctk.CTk):
         # Popup-Schließen behandeln
         self.listener_popup.protocol("WM_DELETE_WINDOW", self._stop_listener_mode)
     
-    def _start_listener_timer(self):
-        """Startet Timer für Listener-Laufzeit"""
-        def update_timer():
-            if self.listener_start_time and self.listener_time_label:
-                elapsed = int(time.time() - self.listener_start_time)
-                hours = elapsed // 3600
-                minutes = (elapsed % 3600) // 60
-                seconds = elapsed % 60
-                
-                time_str = f"Laufzeit: {hours:02d}:{minutes:02d}:{seconds:02d}"
-                self.listener_time_label.configure(text=time_str)
-        
-        def timer_loop():
-            if self.listener_mode and self.listener_mode.is_running():
-                update_timer()
-                # Verwende normalen threading.Timer als Fallback
-                import threading
-                self.listener_timer = threading.Timer(1.0, timer_loop)
-                self.listener_timer.start()
-        
-        timer_loop()
     
     def _handle_listener_message(self, message: str, sender_ip: str):
         """Behandelt empfangene Listener-Nachrichten"""
@@ -1002,15 +1036,7 @@ class ProduktManagerApp(ctk.CTk):
             
             # Listener-Modus stoppen
             if self.listener_mode:
-                self.listener_mode.stop()
-            
-            # Timer stoppen
-            if self.listener_timer:
-                # SafeTimer verwenden - falls vorhanden stop(), sonst cancel()
-                if hasattr(self.listener_timer, 'stop'):
-                    self.listener_timer.stop()
-                elif hasattr(self.listener_timer, 'cancel'):
-                    self.listener_timer.cancel()
+                self._stop_listener_mode()
             
             # Threads beenden
             self.thread_manager.shutdown()
