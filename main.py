@@ -883,8 +883,8 @@ class ProduktManagerApp(ctk.CTk):
 
         try:
             # Listener-Konfiguration
-            send_ip = self.send_ip_entry.get()
-            send_port = int(self.send_port_entry.get())
+            send_ip = self.send_ip_entry.get().strip()
+            send_port = int(self.send_port_entry.get().strip())
 
             camera_ip = (
                 self.ip_entry.get().strip()
