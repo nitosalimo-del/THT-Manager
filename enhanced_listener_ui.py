@@ -70,14 +70,12 @@ class ListenerLogWindow(ctk.CTkToplevel):
         )
         self.runtime_label.pack(side="right", padx=10, pady=10)
         
-        # Port-Info
-        if hasattr(self.parent_app, 'listener_port_entry'):
-            port = self.parent_app.listener_port_entry.get()
-            self.port_label = ctk.CTkLabel(
-                self.header_frame,
-                text=f"Port: {port}"
-            )
-            self.port_label.pack(side="right", padx=10, pady=10)
+        # Port-Info (fest 34000)
+        self.port_label = ctk.CTkLabel(
+            self.header_frame,
+            text="Port: 34000"
+        )
+        self.port_label.pack(side="right", padx=10, pady=10)
         
         # Steuerungsbuttons
         self.control_frame = ctk.CTkFrame(self)

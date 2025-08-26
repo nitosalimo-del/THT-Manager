@@ -267,13 +267,9 @@ class ProduktManagerApp(ctk.CTk):
         port_label = ctk.CTkLabel(self.lima_panel, text="LIMA Port")
         port_label.grid(row=1, column=1, padx=5)
         
-        # Listener-Port
-        self.listener_port_entry = ctk.CTkEntry(self.lima_panel, width=100)
-        self.listener_port_entry.insert(0, str(self.lima_config.get("listener_port", Config.DEFAULT_LIMA_CONFIG["listener_port"])))
-        self.listener_port_entry.grid(row=0, column=2, pady=2, padx=5)
-        
-        listener_label = ctk.CTkLabel(self.lima_panel, text="Listener Port")
-        listener_label.grid(row=1, column=2, padx=5)
+        # Listener-Port ist fest 34000 und wird nicht konfigurierbar angezeigt
+        listener_label = ctk.CTkLabel(self.lima_panel, text="Listener Port: 34000")
+        listener_label.grid(row=0, column=2, padx=5, pady=2)
         
         # Send-IP
         self.send_ip_entry = ctk.CTkEntry(self.lima_panel, width=200)
@@ -529,7 +525,8 @@ class ProduktManagerApp(ctk.CTk):
             config = {
                 "ip": self.ip_entry.get(),
                 "port": int(self.port_entry.get()),
-                "listener_port": int(self.listener_port_entry.get()),
+                # Listener-Port ist fest auf 34000 gesetzt
+                "listener_port": 34000,
                 "send_ip": self.send_ip_entry.get(),
                 "send_port": int(self.send_port_entry.get())
             }
@@ -886,12 +883,6 @@ class ProduktManagerApp(ctk.CTk):
 
         try:
             # Listener-Konfiguration
-            listen_port = int(self.listener_port_entry.get())
-            if listen_port == 34000:
-                self.message_handler.show_error(
-                    "Fehler", "Listener-Port darf nicht 34000 sein"
-                )
-                return
             send_ip = self.send_ip_entry.get()
             send_port = int(self.send_port_entry.get())
 
@@ -903,7 +894,6 @@ class ProduktManagerApp(ctk.CTk):
 
             # Listener-Modus starten mit BEIDEN Callbacks
             self.listener_mode = ListenerMode(
-                listen_port=listen_port,
                 send_ip=send_ip,
                 send_port=send_port,
                 camera_ip=camera_ip,
@@ -919,8 +909,8 @@ class ProduktManagerApp(ctk.CTk):
                 self._show_listener_log_window()  # Korrigierter Methodenname
 
                 self.sidebar_manager.set_listener_active(True)
-                self.message_handler.show_info("Listener gestartet", f"Lauscht auf Port {listen_port}")
-                self.logger.info(f"Listener-Modus gestartet auf Port {listen_port}")
+                self.message_handler.show_info("Listener gestartet", "Lauscht auf Port 34000")
+                self.logger.info("Listener-Modus gestartet auf Port 34000")
             else:
                 self.message_handler.show_error("Fehler", "Listener-Modus konnte nicht gestartet werden")
 
@@ -1027,7 +1017,7 @@ class ProduktManagerApp(ctk.CTk):
 
         port_label = ctk.CTkLabel(
             self.listener_popup,
-            text=f"Port: {self.listener_port_entry.get()}"
+            text="Port: 34000"
         )
         port_label.pack(pady=5)
         
