@@ -268,21 +268,32 @@ class ListenerMode:
         self.listen_port = listen_port
         self.send_ip = send_ip
         self.send_port = send_port
-        
+
         self.server_socket: Optional[socket.socket] = None
         self.listener_thread: Optional[threading.Thread] = None
         self.running = False
+
+        # Handler für eingehende Nachrichten und optionale Log-Events
         self.message_handler: Optional[Callable[[str, str], None]] = None
-        
+        self.log_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+        # Internes Nachrichten-Log
+        self.message_log: List[Dict[str, Any]] = []
+
         self.logger = logging.getLogger(__name__)
-    
-    def start(self, message_handler: Callable[[str, str], None]) -> bool:
+
+    def start(
+        self,
+        message_handler: Callable[[str, str], None],
+        log_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> bool:
         """Startet den Listener"""
         if self.running:
             return False
 
         try:
             self.message_handler = message_handler
+            self.log_callback = log_callback
             
             # Server-Socket erstellen
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -327,26 +338,6 @@ class ListenerMode:
         """Prüft ob Listener läuft"""
         return bool(self.running and self.listener_thread and self.listener_thread.is_alive())
 
-    def _log_event(self, event_type: str, message: str, source: str) -> None:
-        event = {
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "type": event_type,
-            "message": message,
-            "source": source
-        }
-        self.message_log.append(event)
-        if self.log_callback:
-            try:
-                self.log_callback(event)
-            except Exception:
-                pass
-
-    def get_message_log(self) -> List[Dict[str, Any]]:
-        return list(self.message_log)
-
-    def clear_message_log(self) -> None:
-        self.message_log.clear()
-    
     def _listener_loop(self):
         """Haupt-Listener-Schleife"""
         while self.running and self.server_socket:
