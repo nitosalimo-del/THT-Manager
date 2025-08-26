@@ -1,0 +1,20 @@
+2025-08-12 10:50:33,242 - __main__ - INFO - THT-Produktmanager wird gestartet...
+2025-08-12 10:50:33,260 - database_manager - INFO - Feld PosPCB_0 zur Tabelle hinzugefügt
+2025-08-12 10:50:33,269 - database_manager - INFO - Feld PosPCB_1 zur Tabelle hinzugefügt
+2025-08-12 10:50:33,277 - database_manager - INFO - Feld PosPCB_2 zur Tabelle hinzugefügt
+2025-08-12 10:50:33,286 - database_manager - INFO - Feld PosPCB_3 zur Tabelle hinzugefügt
+2025-08-12 10:50:33,293 - database_manager - INFO - Feld PosPCB_4 zur Tabelle hinzugefügt
+2025-08-12 10:50:33,294 - database_manager - INFO - Datenbank erfolgreich initialisiert
+2025-08-12 10:50:34,048 - database_manager - INFO - 0 Produkte aus Datenbank geladen
+2025-08-12 10:50:39,477 - ui_manager - WARNING - Verbindung fehlgeschlagen: LIMA nicht erreichbar
+2025-08-12 10:51:45,539 - __main__ - INFO - THT-Produktmanager wird gestartet...
+2025-08-12 10:51:45,541 - database_manager - INFO - Datenbank erfolgreich initialisiert
+2025-08-12 10:51:46,006 - database_manager - INFO - 0 Produkte aus Datenbank geladen
+2025-08-12 10:51:51,225 - ui_manager - WARNING - Verbindung fehlgeschlagen: LIMA nicht erreichbar
+2025-08-12 10:51:52,947 - __main__ - INFO - THT-Produktmanager erfolgreich gestartet
+2025-08-12 10:52:00,438 - communication_manager - INFO - Listener gestartet auf Port 3400
+2025-08-12 10:52:00,486 - __main__ - ERROR - Fehler beim Starten des Listener-Modus: 'SidebarManager' object has no attribute 'set_listener_active'
+2025-08-12 10:52:00,486 - ui_manager - ERROR - Fehler: Listener-Modus fehlgeschlagen: 'SidebarManager' object has no attribute 'set_listener_active'
+2025-08-12 10:52:04,088 - communication_manager - INFO - Listener gestoppt
+2025-08-12 10:52:05,412 - __main__ - INFO - Anwendung wird beendet...
+2025-08-12 10:52:05,413 - __main__ - ERROR - Fehler beim Cleanup: 'ThreadManager' object has no attribute 'shutdown'

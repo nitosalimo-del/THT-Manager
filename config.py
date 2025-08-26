@@ -21,9 +21,9 @@ class Config:
     
     # Standard LIMA-Konfiguration
     DEFAULT_LIMA_CONFIG = {
-        "ip": "192.168.100.252",
-        "port": 62232,
-        "listener_port": 3400,
+        "ip": "10.3.218.3",
+        "port": 33020,
+        "listener_port": 34000,
         "send_ip": "127.0.0.1",
         "send_port": 3401
     }
@@ -66,7 +66,7 @@ class Config:
         "get_focus": '<LIMA CMD="Project_GetNode" DIR="Request" PATH="Module Application.Smart Camera.Optic Control.Focus Position [mm]" />',
         "trigger": "<T/>",
         "get_code": '<LIMA CMD="Project_GetNode" DIR="Request" PATH="Module Application.Module Spreadsheet.Exports.C1" />',
-        "get_tcp_pose": '<LIMA CMD="Project_GetNode" DIR="Request" PATH="Module Application.URRobot.Actual TCP Pose" />',
+        "get_tcp_pose": 'get_actual_tcp_pose()',
         "af_width": '<LIMA CMD="Project_GetNode" DIR="Request" PATH="Module Application.Smart Camera.Auto Focus Box.Width" />',
         "af_height": '<LIMA CMD="Project_GetNode" DIR="Request" PATH="Module Application.Smart Camera.Auto Focus Box.Height" />',
         "af_depth": '<LIMA CMD="Project_GetNode" DIR="Request" PATH="Module Application.Smart Camera.Auto Focus Box.Depth" />',
