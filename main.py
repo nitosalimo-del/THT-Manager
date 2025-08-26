@@ -19,6 +19,27 @@ from communication_manager import LimaClient, RobotCommunicator, ListenerMode
 from ui_manager import FormManager, SidebarManager, StatusManager, MessageHandler
 from thread_manager import ThreadManager, SafeTimer
 
+
+#TCP POSITION
+from ur_tcp_position import get_tcp_position
+
+
+ip = input("Geben Sie die IP-Adresse des UR‑Roboters ein: ")
+port_input = input("Port eingeben (Enter für automatische Suche): ").strip()
+ports = [int(port_input)] if port_input else [30002, 30003, 30001]
+
+
+tcp_pos = get_tcp_position(ip, ports)
+if tcp_pos:
+    print("TCP-Position (mm, Grad):")
+    print(f"X: {tcp_pos[0]:.3f}, Y: {tcp_pos[1]:.3f}, Z: {tcp_pos[2]:.3f}")
+    print(f"RX: {tcp_pos[3]:.3f}, RY: {tcp_pos[4]:.3f}, RZ: {tcp_pos[5]:.3f}")
+else:
+    print("TCP-Position konnte nicht ermittelt werden.")
+
+
+#???????????????'
+
 # Zusätzliche Imports für die Hauptdatei
 from enhanced_listener_ui import ListenerLogWindow
 
