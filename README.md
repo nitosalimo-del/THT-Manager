@@ -77,39 +77,5 @@ Die Anwendung ist ein THT‑Produktmanager mit einer grafischen Oberfläche (GUI
 
         UI‑Updates und Programmende (Cleanup).
 
-Wichtige Lerninhalte für Anfänger
 
-    Python‑Grundlagen und OOP
-    Klassen, Vererbung, Module, Ausnahmebehandlung.
-
-    GUI‑Programmierung
-    CustomTkinter (auf Tkinter basierend): Widgets, Events, Layouts, Zustandswechsel von Controls.
-
-    Datenvalidierung und Fehlerbehandlung
-    Eigene Exceptions, Validator‑Methoden, sinnvolle Fehlermeldungen.
-
-    SQLite‑Datenbank
-    Erstellen/Abfragen/Aktualisieren von Tabellen, Kontextmanager für sichere Verbindungen.
-
-    Netzwerkkommunikation
-    Socket‑Programmierung für Client/Server, Timeouts, Senden und Empfangen von Daten.
-
-    Nebenläufigkeit
-    Threads, Timer und Worker‑Queues zur Abwicklung langer oder wiederholter Aufgaben ohne Blockieren der GUI.
-
-    Logging
-    Protokollierung von Ereignissen (Fehler, Aktionen) zur Analyse und Fehlersuche.
-
-Einstiegsempfehlung
-
-    config.py – verstehen, welche Felder und Einstellungen existieren.
-
-    main.py (oberer Bereich) – Einstiegspunkt, wie Komponenten zusammenkommen.
-
-    ui_manager.py – einfache GUI‑Logik studieren und anpassen.
-
-    database_manager.py und validation.py – Datenfluss von Formular → Validierung → Datenbank.
-
-    communication_manager.py & thread_manager.py – später ansehen, wenn Netzwerk‑ und Threading‑Grundlagen sitzen.
-
-Mit diesem Überblick kann ein Anfänger Schritt für Schritt die einzelnen Teile kennenlernen und erweitern.
+Eine Software Anleitung für den Endutzer befindet sich in Arbeit. 
