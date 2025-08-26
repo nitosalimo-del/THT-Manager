@@ -44,9 +44,21 @@ def _start_listener_mode(self):
         listen_port = int(self.listener_port_entry.get())
         send_ip = self.send_ip_entry.get()
         send_port = int(self.send_port_entry.get())
-        
+
+        camera_ip = (
+            self.ip_entry.get()
+            if hasattr(self, "ip_entry")
+            else self.lima_config.get("ip", Config.DEFAULT_LIMA_CONFIG["ip"])
+        )
+
         # Listener-Modus starten
-        self.listener_mode = ListenerMode(listen_port, send_ip, send_port)
+        self.listener_mode = ListenerMode(
+            listen_port,
+            send_ip,
+            send_port,
+            camera_ip=camera_ip,
+            camera_port=34000,
+        )
         success = self.listener_mode.start(
             self._handle_listener_message,
             self._on_listener_log_event  # Neuer Log-Callback

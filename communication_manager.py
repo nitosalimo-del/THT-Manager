@@ -263,14 +263,25 @@ class RobotCommunicator:
 
 class ListenerMode:
     """Erweiterte Listener-Klasse mit Nachrichtenverfolgung"""
-    
-    def __init__(self, listen_port: int, send_ip: str, send_port: int):
+
+    def __init__(
+        self,
+        listen_port: int,
+        send_ip: str,
+        send_port: int,
+        camera_ip: Optional[str] = None,
+        camera_port: int = 34000,
+    ):
         self.listen_port = listen_port
         self.send_ip = send_ip
         self.send_port = send_port
+        self.camera_ip = camera_ip
+        self.camera_port = camera_port
 
         self.server_socket: Optional[socket.socket] = None
         self.listener_thread: Optional[threading.Thread] = None
+        self.client_thread: Optional[threading.Thread] = None
+        self.client_socket: Optional[socket.socket] = None
         self.running = False
 
         # Handler für eingehende Nachrichten und optionale Log-Events
@@ -306,8 +317,17 @@ class ListenerMode:
             self.listener_thread = threading.Thread(target=self._listener_loop, daemon=True)
             self.listener_thread.start()
 
+            # Optional Kamera-Client starten
+            if self.camera_ip:
+                self.client_thread = threading.Thread(target=self._client_loop, daemon=True)
+                self.client_thread.start()
+
             self.logger.info(f"Listener gestartet auf Port {self.listen_port}")
-            self._log_event("LISTENER_STARTED", f"Listener auf Port {self.listen_port} gestartet", "SYSTEM")
+            self._log_event(
+                "LISTENER_STARTED",
+                f"Listener auf Port {self.listen_port} gestartet",
+                "SYSTEM",
+            )
             return True
 
         except Exception as e:
@@ -318,19 +338,30 @@ class ListenerMode:
     def stop(self):
         """Stoppt den Listener"""
         self.running = False
-        
+
         if self.server_socket:
             try:
                 self.server_socket.close()
             except Exception:
                 pass
             self.server_socket = None
-        
+
+        if self.client_socket:
+            try:
+                self.client_socket.close()
+            except Exception:
+                pass
+            self.client_socket = None
+
         if self.listener_thread and self.listener_thread.is_alive():
             self.listener_thread.join(timeout=2.0)
 
+        if self.client_thread and self.client_thread.is_alive():
+            self.client_thread.join(timeout=2.0)
+
         self.listener_thread = None
-        self._log_event("LISTENER_STOPPED", "Listener gestoppt", "SYSTEM")
+        self.client_thread = None
+
         self.logger.info("Listener gestoppt")
         self._log_event("LISTENER_STOPPED", "Listener gestoppt", "SYSTEM")
     
@@ -360,6 +391,56 @@ class ListenerMode:
                 if self.running:  # Nur loggen wenn wir noch laufen sollten
                     self.logger.error(f"Fehler im Listener-Loop: {e}")
                 break
+
+    def _client_loop(self):
+        """Verbindet sich als TCP-Client mit der Kamera und empfängt Nachrichten"""
+        backoff = 1
+        while self.running and self.camera_ip:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    self.client_socket = sock
+                    sock.settimeout(5.0)
+                    sock.connect((self.camera_ip, self.camera_port))
+
+                    self.logger.info(
+                        f"Kamera verbunden: {self.camera_ip}:{self.camera_port}"
+                    )
+                    backoff = 1  # Bei Erfolg Backoff zurücksetzen
+
+                    while self.running:
+                        try:
+                            sock.settimeout(1.0)
+                            data = sock.recv(4096)
+                            if not data:
+                                raise ConnectionError("Verbindung zur Kamera getrennt")
+                            message = data.decode("utf-8").strip()
+                            if message:
+                                self._log_event(
+                                    "MESSAGE_RECEIVED", message, self.camera_ip
+                                )
+                                if self.message_handler:
+                                    self.message_handler(message, self.camera_ip)
+                        except socket.timeout:
+                            continue
+                        except Exception:
+                            raise
+
+            except Exception as e:
+                if self.running:
+                    self.logger.warning(
+                        f"Kamera-Client-Verbindung fehlgeschlagen: {e}"
+                    )
+                    self._log_event(
+                        "CLIENT_DISCONNECTED",
+                        f"Kamera-Verbindung getrennt: {e}",
+                        self.camera_ip,
+                    )
+                if not self.running:
+                    break
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 10)
+            finally:
+                self.client_socket = None
     
     def _handle_client(self, client_socket: socket.socket, address: Tuple[str, int]):
         """Behandelt einzelne Client-Verbindung"""
@@ -394,11 +475,11 @@ class ListenerMode:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(5.0)
                 sock.connect((self.send_ip, self.send_port))
-                
-                # Ausgehende Nachricht loggen
-                self._log_event("MESSAGE_SENT", message, self.send_ip)
 
                 sock.send(message.encode("utf-8"))
+
+                # Ausgehende Nachricht loggen (einmalig)
+                self._log_event("MESSAGE_SENT", message, self.send_ip)
 
                 # Bestätigung empfangen
                 response = sock.recv(1024).decode("utf-8").strip()
