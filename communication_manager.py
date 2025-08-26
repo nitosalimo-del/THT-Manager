@@ -266,13 +266,13 @@ class ListenerMode:
 
     def __init__(
         self,
-        listen_port: int,
         send_ip: str,
         send_port: int,
         camera_ip: Optional[str] = None,
         camera_port: int = 34000,
     ):
-        self.listen_port = listen_port
+        # Lokaler Listener-Port ist fest auf 34000 gesetzt
+        self.listen_port = 34000
         self.send_ip = send_ip
         self.send_port = send_port
         self.camera_ip = camera_ip
