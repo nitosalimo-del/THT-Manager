@@ -268,6 +268,7 @@ class ListenerMode:
         self,
         send_ip: str,
         send_port: int,
+        *,
         camera_ip: Optional[str] = None,
         camera_port: int = 34000,
     ):
@@ -463,7 +464,7 @@ class ListenerMode:
             self.logger.info(f"Client verbunden: {sender_ip}")
             self._log_event("CLIENT_CONNECTED", f"Verbunden mit {sender_ip}", sender_ip)
 
-            # Nachricht empfangen - HIER WAR DER FEHLER: .strip() statt .strip
+            # Nachricht empfangen
             data = client_socket.recv(4096).decode("utf-8", errors="ignore").strip()
             self._log_event("MESSAGE_RECEIVED", data, sender_ip)
 
@@ -504,6 +505,9 @@ class ListenerMode:
 
         except Exception as e:
             self.logger.error(f"Fehler beim Senden der Nachricht: {e}")
+            self._log_event(
+                "CLIENT_ERROR", f"Senden fehlgeschlagen: {e}", self.send_ip
+            )
             return False
     
     def _log_event(self, event_type: str, message: str, source: str):
