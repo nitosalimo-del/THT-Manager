@@ -28,28 +28,8 @@ except ImportError as e:
     ListenerLogWindow = None
 
 
-#TCP POSITION
+# TCP POSITION
 from ur_tcp_position import get_tcp_position
-
-
-ip = input("Geben Sie die IP-Adresse des UR‑Roboters ein: ")
-port_input = input("Port eingeben (Enter für automatische Suche): ").strip()
-ports = [int(port_input)] if port_input else [30002, 30003, 30001]
-
-
-tcp_pos = get_tcp_position(ip, ports)
-if tcp_pos:
-    print("TCP-Position (mm, Grad):")
-    print(f"X: {tcp_pos[0]:.3f}, Y: {tcp_pos[1]:.3f}, Z: {tcp_pos[2]:.3f}")
-    print(f"RX: {tcp_pos[3]:.3f}, RY: {tcp_pos[4]:.3f}, RZ: {tcp_pos[5]:.3f}")
-else:
-    print("TCP-Position konnte nicht ermittelt werden.")
-
-
-#???????????????'
-
-# Zusätzliche Imports für die Hauptdatei
-from enhanced_listener_ui import ListenerLogWindow
 
 # Diese Methoden müssen in der ProduktManagerApp-Klasse geändert/hinzugefügt werden:
 
@@ -616,10 +596,17 @@ class ProduktManagerApp(ctk.CTk):
         # Buttons
         test_btn = ctk.CTkButton(self.lima_panel, text="Verbindung testen", command=self._test_lima_connection)
         test_btn.grid(row=4, column=0, padx=5, pady=10)
-        
+
         save_config_btn = ctk.CTkButton(self.lima_panel, text="Einstellungen speichern", command=self._save_lima_config)
         save_config_btn.grid(row=4, column=1, padx=5, pady=10)
-        
+
+        tcp_test_btn = ctk.CTkButton(
+            self.lima_panel,
+            text="TCP-Pose (UR) testen",
+            command=self._test_tcp_pose_via_ur,
+        )
+        tcp_test_btn.grid(row=5, column=0, columnspan=2, padx=5, pady=10, sticky="w")
+
         # Status-Label für LIMA-Panel
         self.lima_status_label = ctk.CTkLabel(self.lima_panel, text="Status: ❔ Unbekannt")
         self.lima_status_label.grid(row=4, column=2, columnspan=2, sticky="w", padx=5)
@@ -1067,32 +1054,63 @@ class ProduktManagerApp(ctk.CTk):
                 self.after(0, lambda: self.message_handler.show_error("Kommunikationsfehler", str(e)))
         
         self.thread_manager.start_thread(task, name="GetAllAFValues")
+
+    def _get_tcp_pose_via_ur(self):
+        """Ruft die TCP-Pose direkt vom UR-Roboter ab"""
+        ip = self.send_ip_entry.get().strip() if hasattr(self, "send_ip_entry") else ""
+        if not ip:
+            self.message_handler.show_warning("Hinweis", "Bitte Cobot-IP eintragen")
+            return None
+
+        try:
+            pose = get_tcp_position(ip, [30002, 30003, 30001])
+        except Exception as e:
+            self.logger.error(f"UR TCP-Pose Fehler: {e}")
+            self.message_handler.show_error("Fehler", f"TCP-Pose konnte nicht abgefragt werden: {e}")
+            return None
+
+        if not pose:
+            self.message_handler.show_error("Fehler", "TCP-Pose konnte nicht ermittelt werden")
+            return None
+
+        return pose
+
+    def _test_tcp_pose_via_ur(self):
+        """Testet die TCP-Pose-Abfrage und zeigt sie als Popup"""
+        pose = self._get_tcp_pose_via_ur()
+        if pose:
+            msg = (f"X: {pose[0]:.3f}, Y: {pose[1]:.3f}, Z: {pose[2]:.3f}\n"
+                   f"RX: {pose[3]:.3f}, RY: {pose[4]:.3f}, RZ: {pose[5]:.3f}")
+            self.message_handler.show_info("TCP-Pose (UR)", msg)
     
     def _handle_position_request(self, field: str):
         """Behandelt Positionsanfragen"""
-        if not self.robot_communicator:
-            self.message_handler.show_error("Fehler", "LIMA-Verbindung nicht verfügbar")
-            return
-        
-        try:
-            position = self.robot_communicator.get_current_position()
-            if position:
-                # Position je nach Feld-Typ verarbeiten
-                if "X" in field:
-                    self._update_form_field(field, str(position[0]))
-                elif "Y" in field:
-                    self._update_form_field(field, str(position[1]))
-                elif "Z" in field:
-                    self._update_form_field(field, str(position[2]))
-                else:
-                    # Vollständige Position als String
-                    pos_str = f"{position[0]},{position[1]},{position[2]}"
-                    self._update_form_field(field, pos_str)
-            else:
+        position = None
+
+        # Erster Versuch über LIMA
+        if self.robot_communicator:
+            try:
+                position = self.robot_communicator.get_current_position()
+            except CommunicationError as e:
+                self.logger.warning(f"LIMA-Positionsabfrage fehlgeschlagen: {e}")
+
+        # Fallback über direkte UR-Abfrage
+        if not position:
+            position = self._get_tcp_pose_via_ur()
+            if not position:
                 self.message_handler.show_error("Fehler", f"Position für {field} konnte nicht abgerufen werden")
-        
-        except CommunicationError as e:
-            self.message_handler.show_error("Kommunikationsfehler", str(e))
+                return
+
+        # Position je nach Feld-Typ verarbeiten
+        if "X" in field:
+            self._update_form_field(field, str(position[0]))
+        elif "Y" in field:
+            self._update_form_field(field, str(position[1]))
+        elif "Z" in field:
+            self._update_form_field(field, str(position[2]))
+        else:
+            pos_str = ",".join(str(v) for v in (position[:3] if len(position) >= 3 else position))
+            self._update_form_field(field, pos_str)
     
     def _get_lima_info(self):
         """Holt Produktinformationen von LIMA"""
