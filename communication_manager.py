@@ -268,6 +268,7 @@ class ListenerMode:
         self,
         send_ip: str,
         send_port: int,
+        *,
         camera_ip: Optional[str] = None,
         camera_port: int = 34000,
     ):
