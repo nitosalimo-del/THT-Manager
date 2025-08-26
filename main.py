@@ -883,21 +883,21 @@ class ProduktManagerApp(ctk.CTk):
 
         try:
             # Listener-Konfiguration
-            send_ip = self.send_ip_entry.get()
-            send_port = int(self.send_port_entry.get())
+            send_ip = self.send_ip_entry.get().strip()
+            send_port = int(self.send_port_entry.get().strip())
 
-            camera_ip = (
-                self.ip_entry.get().strip()
-                if hasattr(self, "ip_entry")
-                else self.lima_config.get("ip", Config.DEFAULT_LIMA_CONFIG["ip"])
-            )
+            if hasattr(self, "ip_entry"):
+                camera_ip = self.ip_entry.get().strip()
+            else:
+                camera_ip = self.lima_config.get(
+                    "ip", Config.DEFAULT_LIMA_CONFIG["ip"]
+                )
 
             # Listener-Modus starten mit BEIDEN Callbacks
             self.listener_mode = ListenerMode(
                 send_ip=send_ip,
                 send_port=send_port,
                 camera_ip=camera_ip,
-                camera_port=34000,
             )
             success = self.listener_mode.start(
                 self._handle_listener_message,
