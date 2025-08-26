@@ -887,6 +887,11 @@ class ProduktManagerApp(ctk.CTk):
         try:
             # Listener-Konfiguration
             listen_port = int(self.listener_port_entry.get())
+            if listen_port == 34000:
+                self.message_handler.show_error(
+                    "Fehler", "Listener-Port darf nicht 34000 sein"
+                )
+                return
             send_ip = self.send_ip_entry.get()
             send_port = int(self.send_port_entry.get())
 
@@ -898,15 +903,15 @@ class ProduktManagerApp(ctk.CTk):
 
             # Listener-Modus starten mit BEIDEN Callbacks
             self.listener_mode = ListenerMode(
-                listen_port,
-                send_ip,
-                send_port,
+                listen_port=listen_port,
+                send_ip=send_ip,
+                send_port=send_port,
                 camera_ip=camera_ip,
                 camera_port=34000,
             )
             success = self.listener_mode.start(
                 self._handle_listener_message,
-                self._on_listener_log_event  # Log-Callback hinzufügen
+                self._on_listener_log_event,
             )
 
             if success:

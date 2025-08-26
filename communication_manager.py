@@ -400,58 +400,60 @@ class ListenerMode:
         backoff = 1
         while self.running and self.camera_ip:
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    self.client_socket = sock
-                    sock.settimeout(5.0)
-                    sock.connect((self.camera_ip, self.camera_port))
+                self.client_socket = socket.create_connection(
+                    (self.camera_ip, self.camera_port), timeout=5
+                )
+                sock = self.client_socket
+                sock.settimeout(1.0)
+                self.logger.info(
+                    f"Kamera verbunden: {self.camera_ip}:{self.camera_port}"
+                )
+                self._log_event(
+                    "CLIENT_CONNECTED",
+                    f"Kamera verbunden: {self.camera_ip}:{self.camera_port}",
+                    self.camera_ip,
+                )
+                backoff = 1
+                buffer = ""
 
-                    self.logger.info(
-                        f"Kamera verbunden: {self.camera_ip}:{self.camera_port}"
-                    )
-                    backoff = 1  # Bei Erfolg Backoff zurücksetzen
-                    buffer = ""
-
-                    while self.running:
-                        try:
-                            sock.settimeout(1.0)
-                            data = sock.recv(4096)
-                            if not data:
-                                raise ConnectionError("Verbindung zur Kamera getrennt")
-                            buffer += data.decode("utf-8", errors="ignore")
-                            while "\n" in buffer:
-                                line, buffer = buffer.split("\n", 1)
-                                line = line.rstrip()
-                                if line:
-                                    self._log_event(
-                                        "MESSAGE_RECEIVED", line, self.camera_ip
-                                    )
-                                    if self.message_handler:
-                                        self.message_handler(line, self.camera_ip)
-                        except socket.timeout:
-                            continue
-                        except Exception:
-                            raise
+                while self.running:
+                    try:
+                        data = sock.recv(4096)
+                        if not data:
+                            raise ConnectionError("Verbindung zur Kamera getrennt")
+                        buffer += data.decode("utf-8", errors="ignore")
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            line = line.strip()
+                            if line:
+                                self._log_event(
+                                    "MESSAGE_RECEIVED", line, self.camera_ip
+                                )
+                                if self.message_handler:
+                                    self.message_handler(line, self.camera_ip)
+                    except socket.timeout:
+                        continue
 
             except Exception as e:
                 if self.running:
                     self.logger.warning(
                         f"Kamera-Client-Verbindung fehlgeschlagen: {e}"
                     )
-                    event_type = (
-                        "CLIENT_DISCONNECTED"
-                        if isinstance(e, ConnectionError)
-                        else "CLIENT_ERROR"
-                    )
                     self._log_event(
-                        event_type,
+                        "CLIENT_ERROR",
                         f"Kamera-Verbindung: {e}",
-                        self.camera_ip,
+                        self.camera_ip or "",
                     )
                 if not self.running:
                     break
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 10)
             finally:
+                if self.client_socket:
+                    try:
+                        self.client_socket.close()
+                    except Exception:
+                        pass
                 self.client_socket = None
     
     def _handle_client(self, client_socket: socket.socket, address: Tuple[str, int]):
