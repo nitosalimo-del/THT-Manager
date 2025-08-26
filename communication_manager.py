@@ -366,13 +366,15 @@ class ListenerMode:
         try:
             sender_ip = address[0]
             self.logger.info(f"Client verbunden: {sender_ip}")
-            
+            self._log_event("CLIENT_CONNECTED", f"Verbunden mit {sender_ip}", sender_ip)
+
             # Nachricht empfangen - HIER WAR DER FEHLER: .strip() statt .strip
             data = client_socket.recv(4096).decode("utf-8").strip()
-            
+            self._log_event("MESSAGE_RECEIVED", data, sender_ip)
+
             if data and self.message_handler:
                 self.message_handler(data, sender_ip)
-                
+
                 # Bestätigung senden
                 response = "MESSAGE_RECEIVED"
                 client_socket.send(response.encode("utf-8"))
@@ -395,9 +397,8 @@ class ListenerMode:
                 
                 # Ausgehende Nachricht loggen
                 self._log_event("MESSAGE_SENT", message, self.send_ip)
-                
+
                 sock.send(message.encode("utf-8"))
-                self._log_event("MESSAGE_SENT", message, self.send_ip)
 
                 # Bestätigung empfangen
                 response = sock.recv(1024).decode("utf-8").strip()
