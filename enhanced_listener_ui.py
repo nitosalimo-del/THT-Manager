@@ -19,18 +19,35 @@ class ListenerLogWindow(ctk.CTkToplevel):
         self.geometry("900x600")
         self.resizable(True, True)
         
-        # Fenster konfigurieren
+        # Fenster konfigurieren - NICHT grab_set() verwenden
         self.transient(parent)
-        self.grab_set()
-        
+        # self.grab_set()  # ENTFERNT - verhindert Interaktion mit Hauptfenster
+
+        # Fensterzerstörung behandeln
+        self.protocol("WM_DELETE_WINDOW", self.on_window_close)
+
         # UI erstellen
         self.create_widgets()
-        
+
         # Automatisch scrollen
         self.auto_scroll = True
-        
-        # Update-Timer
+
+        # Update-Timer starten
+        self.update_timer_running = True
         self.after(100, self.update_display)
+
+    def on_window_close(self):
+        """Wird aufgerufen wenn Fenster geschlossen wird"""
+        self.update_timer_running = False  # Timer stoppen
+        self.stop_listener()
+
+    def stop_listener(self):
+        """Stoppt den Listener und schließt das Fenster"""
+        self.update_timer_running = False  # Timer stoppen
+        if hasattr(self.parent_app, '_stop_listener_mode'):
+            self.parent_app._stop_listener_mode()
+        else:
+            self.destroy()
     
     def create_widgets(self):
         """Erstellt die UI-Elemente"""
@@ -164,19 +181,15 @@ class ListenerLogWindow(ctk.CTkToplevel):
                 title="Export fehlgeschlagen"
             )
     
-    def stop_listener(self):
-        """Stoppt den Listener und schließt das Fenster"""
-        if hasattr(self.parent_app, '_stop_listener_mode'):
-            self.parent_app._stop_listener_mode()
-        self.destroy()
-    
     def add_log_entry(self, event: Dict[str, Any]):
-        """Fügt einen Log-Eintrag hinzu"""
+        """Fügt einen Log-Eintrag hinzu - Thread-sicher"""
         try:
-            # Farben für verschiedene Event-Typen
+            if not self.winfo_exists():
+                return
+
             color_map = {
                 "MESSAGE_RECEIVED": "lightblue",
-                "MESSAGE_SENT": "lightgreen", 
+                "MESSAGE_SENT": "lightgreen",
                 "RESPONSE_SENT": "lightcyan",
                 "RESPONSE_RECEIVED": "lightyellow",
                 "LISTENER_STARTED": "lightgray",
@@ -185,12 +198,11 @@ class ListenerLogWindow(ctk.CTkToplevel):
                 "SEND_ERROR": "lightcoral",
                 "SYSTEM": "lightgray"
             }
-            
-            # Icon für Event-Typ
+
             icon_map = {
                 "MESSAGE_RECEIVED": "⬇️",
                 "MESSAGE_SENT": "⬆️",
-                "RESPONSE_SENT": "↗️", 
+                "RESPONSE_SENT": "↗️",
                 "RESPONSE_RECEIVED": "↙️",
                 "LISTENER_STARTED": "🟢",
                 "LISTENER_STOPPED": "🔴",
@@ -198,51 +210,53 @@ class ListenerLogWindow(ctk.CTkToplevel):
                 "SEND_ERROR": "❌",
                 "SYSTEM": "ℹ️"
             }
-            
-            timestamp = event['timestamp']
-            event_type = event['type']
-            message = event['message']
-            source = event['source']
-            
+
+            timestamp = event.get('timestamp', '')
+            event_type = event.get('type', 'UNKNOWN')
+            message = event.get('message', '')
+            source = event.get('source', '')
+
             icon = icon_map.get(event_type, "📝")
-            
-            # Formatierte Log-Zeile erstellen
+
             log_line = f"{timestamp} {icon} [{event_type}] {source}: {message}\n"
-            
-            # Text einfügen
+
             self.log_text.insert("end", log_line)
-            
-            # Bei Auto-Scroll zum Ende scrollen
+
             if self.auto_scroll:
                 self.log_text.see("end")
-                
+
         except Exception as e:
             print(f"Fehler beim Hinzufügen des Log-Eintrags: {e}")
     
     def update_display(self):
         """Aktualisiert die Anzeige periodisch"""
         try:
+            # Prüfen ob Timer noch laufen soll
+            if not self.update_timer_running or not self.winfo_exists():
+                return
+
             # Laufzeit aktualisieren
             if hasattr(self.parent_app, 'listener_start_time') and self.parent_app.listener_start_time:
                 elapsed = int(time.time() - self.parent_app.listener_start_time)
                 hours = elapsed // 3600
                 minutes = (elapsed % 3600) // 60
                 seconds = elapsed % 60
-                
+
                 time_str = f"Laufzeit: {hours:02d}:{minutes:02d}:{seconds:02d}"
                 self.runtime_label.configure(text=time_str)
-            
+
             # Statistik aktualisieren
             if hasattr(self.parent_app, 'listener_mode') and self.parent_app.listener_mode:
                 log_count = len(self.parent_app.listener_mode.get_message_log())
                 self.stats_label.configure(text=f"Nachrichten: {log_count}")
-            
-            # Nächstes Update planen
-            if self.winfo_exists():
+
+            # Nächstes Update planen - nur wenn Timer noch läuft
+            if self.update_timer_running:
                 self.after(1000, self.update_display)
-                
+
         except Exception as e:
             print(f"Fehler beim Aktualisieren der Anzeige: {e}")
+            self.update_timer_running = False
 
 
 class MessageDetailsDialog(ctk.CTkToplevel):
