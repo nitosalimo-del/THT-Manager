@@ -390,6 +390,9 @@ class ListenerMode:
             except Exception as e:
                 if self.running:  # Nur loggen wenn wir noch laufen sollten
                     self.logger.error(f"Fehler im Listener-Loop: {e}")
+                    self._log_event(
+                        "SERVER_ERROR", f"Listener-Loop-Fehler: {e}", "SYSTEM"
+                    )
                 break
 
     def _client_loop(self):
@@ -406,6 +409,7 @@ class ListenerMode:
                         f"Kamera verbunden: {self.camera_ip}:{self.camera_port}"
                     )
                     backoff = 1  # Bei Erfolg Backoff zurücksetzen
+                    buffer = ""
 
                     while self.running:
                         try:
@@ -413,13 +417,16 @@ class ListenerMode:
                             data = sock.recv(4096)
                             if not data:
                                 raise ConnectionError("Verbindung zur Kamera getrennt")
-                            message = data.decode("utf-8").strip()
-                            if message:
-                                self._log_event(
-                                    "MESSAGE_RECEIVED", message, self.camera_ip
-                                )
-                                if self.message_handler:
-                                    self.message_handler(message, self.camera_ip)
+                            buffer += data.decode("utf-8", errors="ignore")
+                            while "\n" in buffer:
+                                line, buffer = buffer.split("\n", 1)
+                                line = line.rstrip()
+                                if line:
+                                    self._log_event(
+                                        "MESSAGE_RECEIVED", line, self.camera_ip
+                                    )
+                                    if self.message_handler:
+                                        self.message_handler(line, self.camera_ip)
                         except socket.timeout:
                             continue
                         except Exception:
@@ -430,9 +437,14 @@ class ListenerMode:
                     self.logger.warning(
                         f"Kamera-Client-Verbindung fehlgeschlagen: {e}"
                     )
+                    event_type = (
+                        "CLIENT_DISCONNECTED"
+                        if isinstance(e, ConnectionError)
+                        else "CLIENT_ERROR"
+                    )
                     self._log_event(
-                        "CLIENT_DISCONNECTED",
-                        f"Kamera-Verbindung getrennt: {e}",
+                        event_type,
+                        f"Kamera-Verbindung: {e}",
                         self.camera_ip,
                     )
                 if not self.running:
@@ -450,7 +462,7 @@ class ListenerMode:
             self._log_event("CLIENT_CONNECTED", f"Verbunden mit {sender_ip}", sender_ip)
 
             # Nachricht empfangen - HIER WAR DER FEHLER: .strip() statt .strip
-            data = client_socket.recv(4096).decode("utf-8").strip()
+            data = client_socket.recv(4096).decode("utf-8", errors="ignore").strip()
             self._log_event("MESSAGE_RECEIVED", data, sender_ip)
 
             if data and self.message_handler:
@@ -462,6 +474,9 @@ class ListenerMode:
         
         except Exception as e:
             self.logger.error(f"Fehler beim Behandeln des Clients {address}: {e}")
+            self._log_event(
+                "SERVER_ERROR", f"Client-Handler-Fehler: {e}", sender_ip
+            )
         
         finally:
             try:
@@ -482,7 +497,7 @@ class ListenerMode:
                 self._log_event("MESSAGE_SENT", message, self.send_ip)
 
                 # Bestätigung empfangen
-                response = sock.recv(1024).decode("utf-8").strip()
+                response = sock.recv(1024).decode("utf-8", errors="ignore").strip()
                 return response == "MESSAGE_RECEIVED"
 
         except Exception as e:
