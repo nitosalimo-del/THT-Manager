@@ -17,6 +17,7 @@ from exceptions import *
 from validation import Validator
 from database_manager import DatabaseManager
 from communication_manager import LimaClient, RobotCommunicator, ListenerMode
+from listener_processor import handle_listener_payload, WU_RE
 from ui_manager import FormManager, SidebarManager, StatusManager, MessageHandler
 from thread_manager import ThreadManager
 
@@ -1050,24 +1051,29 @@ class ProduktManagerApp(ctk.CTk):
         """Behandelt empfangene Listener-Nachrichten"""
         try:
             self.logger.info(f"Listener-Nachricht von {sender_ip}: {message}")
-            
-            # Nachricht verarbeiten (je nach Protokoll)
-            # Hier würde die spezifische Nachrichtenverarbeitung stattfinden
-            
-            # Beispiel: Produktnummer aus Nachricht extrahieren und laden
+            if self.listener_mode:
+                handle_listener_payload(
+                    message,
+                    self.db_manager,
+                    self.listener_mode.send_ip,
+                    self.listener_mode.send_port,
+                    self.logger,
+                )
+
+            # Zusätzliche Befehle verarbeiten
             if message.startswith("LOAD_PRODUCT:"):
                 product_number = message.split(":", 1)[1].strip()
                 self.after(0, lambda: self._load_product_by_number(product_number))
-            
+
             elif message.startswith("GET_AF_VALUES"):
                 self.after(0, lambda: self._get_all_af_values())
-            
+
             elif message.startswith("TRIGGER"):
                 self.after(0, lambda: self._send_trigger())
-            
-            else:
+
+            elif not WU_RE.search(message):
                 self.logger.warning(f"Unbekannte Listener-Nachricht: {message}")
-        
+
         except Exception as e:
             self.logger.error(f"Fehler beim Verarbeiten der Listener-Nachricht: {e}")
     

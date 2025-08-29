@@ -163,10 +163,14 @@ class DatabaseManager:
                 c.execute('SELECT * FROM produkte WHERE "Produktnummer"=?', (wu_nummer,))
                 row = c.fetchone()
                 return dict(row) if row else None
-        
+
         except Exception as e:
             logger.error(f"Fehler bei der Produktsuche: {e}")
             return None
+
+    def get_by_wu(self, wu: str) -> Optional[Dict[str, Any]]:
+        """Alias für lookup_product_by_wu."""
+        return self.lookup_product_by_wu(wu)
     
     def save_position(self, laufende_nummer: int, field: str, value: str) -> bool:
         """Speichert Position für ein Produkt"""
