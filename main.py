@@ -30,6 +30,7 @@ except ImportError as e:
 
 # TCP POSITION
 from ur_tcp_position import get_tcp_position
+from rtde_one_shot import read_rtde_pose
 
 # Logging konfigurieren
 def setup_logging():
@@ -270,6 +271,9 @@ class ProduktManagerApp(ctk.CTk):
         # Listener-Port ist fest 34000 und wird nicht konfigurierbar angezeigt
         listener_label = ctk.CTkLabel(self.lima_panel, text="Listener Port: 34000")
         listener_label.grid(row=0, column=2, padx=5, pady=2)
+
+        rtde_label = ctk.CTkLabel(self.lima_panel, text="RTDE Port: 30004")
+        rtde_label.grid(row=0, column=3, padx=5, pady=2, sticky="w")
         
         # Send-IP
         self.send_ip_entry = ctk.CTkEntry(self.lima_panel, width=200)
@@ -779,33 +783,38 @@ class ProduktManagerApp(ctk.CTk):
             self.message_handler.show_info("TCP-Pose (UR)", msg)
     
     def _handle_position_request(self, field: str):
-        """Behandelt Positionsanfragen"""
-        position = None
-
-        # Erster Versuch über LIMA
-        if self.robot_communicator:
-            try:
-                position = self.robot_communicator.get_current_position()
-            except CommunicationError as e:
-                self.logger.warning(f"LIMA-Positionsabfrage fehlgeschlagen: {e}")
-
-        # Fallback über direkte UR-Abfrage
-        if not position:
-            position = self._get_tcp_pose_via_ur()
-            if not position:
-                self.message_handler.show_error("Fehler", f"Position für {field} konnte nicht abgerufen werden")
+        try:
+            if not self.selected_product:
+                self.message_handler.show_warning("Hinweis", "Kein Produkt ausgewählt.")
                 return
 
-        # Position je nach Feld-Typ verarbeiten
-        if "X" in field:
-            self._update_form_field(field, str(position[0]))
-        elif "Y" in field:
-            self._update_form_field(field, str(position[1]))
-        elif "Z" in field:
-            self._update_form_field(field, str(position[2]))
-        else:
-            pos_str = ",".join(str(v) for v in (position[:3] if len(position) >= 3 else position))
-            self._update_form_field(field, pos_str)
+            robot_ip = self.send_ip_entry.get().strip()
+            if not robot_ip:
+                self.message_handler.show_warning("Hinweis", "Bitte Cobot IP (Send) setzen.")
+                return
+
+            x, y, z, rx, ry, rz = read_rtde_pose(robot_ip, timeout=1.0)
+            p_str = f"p[{x:.6f}, {y:.6f}, {z:.6f}, {rx:.6f}, {ry:.6f}, {rz:.6f}]"
+
+            entry = self.form_manager.entries.get(field)
+            if entry:
+                entry.configure(state="normal")
+                entry.delete(0, "end")
+                entry.insert(0, p_str)
+                if not self.admin_mode:
+                    entry.configure(state="disabled")
+
+            lauf_text = self.form_manager.entries["Laufende Nummer"].get().strip()
+            laufende_nummer = int(lauf_text)
+            update_data = {field: p_str, "Cobot Zeitstempel": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            self.db_manager.update_product(laufende_nummer, update_data)
+
+            self.message_handler.show_info("Erfolg", f"{field} aktualisiert.")
+            self.logger.info("RTDE Pose für %s gespeichert: %s", field, p_str)
+
+        except Exception as e:
+            self.logger.exception("Fehler beim Abrufen der RTDE-Pose")
+            self.message_handler.show_error("RTDE-Fehler", str(e))
     
     def _get_lima_info(self):
         """Holt Produktinformationen von LIMA"""
