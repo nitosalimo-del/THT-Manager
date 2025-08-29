@@ -93,18 +93,19 @@ def parse_tcp_position(response: str) -> Optional[List[float]]:
     return values[:6] if values and len(values) >= 6 else None
 
 
-def try_connection(ip: str, ports: List[int] = [30002, 30003, 30001]) -> Tuple[Optional[socket.socket], Optional[int]]:
+def try_connection(ip: str, ports: List[int] = [30002, 30003, 30001]) -> Tuple[Optional[socket.socket], Optional[int], List[str]]:
+    messages: List[str] = []
     for port in ports:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5.0)
             sock.connect((ip, port))
-            print(f"\u2713 Verbindung erfolgreich auf Port {port} ({PORTS.get(port, 'Unknown')})")
-            return sock, port
+            messages.append(f"\u2713 Verbindung erfolgreich auf Port {port} ({PORTS.get(port, 'Unknown')})")
+            return sock, port, messages
         except Exception:
-            print(f"\u2717 Port {port} fehlgeschlagen")
+            messages.append(f"\u2717 Port {port} fehlgeschlagen")
             continue
-    return None, None
+    return None, None, messages
 
 
 class URRobotError(Exception):
@@ -124,13 +125,15 @@ def is_valid_position(values: List[float]) -> bool:
     return True
 
 
-def get_tcp_position(ip: str, ports: List[int] = [30002, 30003, 30001], retries: int = 3) -> Optional[List[float]]:
+def get_tcp_position(ip: str, ports: List[int] = [30002, 30003, 30001], retries: int = 3) -> Tuple[Optional[List[float]], str]:
     """Retrieve TCP position with retry and error handling"""
+    log_lines: List[str] = []
     for attempt in range(1, retries + 1):
-        logger.info(f"Verbindungsversuch {attempt}/{retries}")
-        sock, port = try_connection(ip, ports)
+        log_lines.append(f"Verbindungsversuch {attempt}/{retries}")
+        sock, port, conn_msgs = try_connection(ip, ports)
+        log_lines.extend(conn_msgs)
         if not sock:
-            logger.error("Keine Verbindung zum Roboter hergestellt")
+            log_lines.append("Keine Verbindung zum Roboter hergestellt")
             continue
         try:
             cmd = "get_actual_tcp_pose()\n"
@@ -155,27 +158,29 @@ def get_tcp_position(ip: str, ports: List[int] = [30002, 30003, 30001], retries:
             x, y, z = [v * 1000 for v in values[:3]]
             rx, ry, rz = [math.degrees(v) for v in values[3:]]
             position = [x, y, z, rx, ry, rz]
-            return position
+            return position, "\n".join(log_lines)
 
         except (socket.error, URRobotError) as exc:
             logger.error(f"Fehler beim Abrufen der TCP-Position: {exc}")
+            log_lines.append(f"Fehler beim Abrufen der TCP-Position: {exc}")
         finally:
             sock.close()
         time.sleep(1)
-    return None
+    log_lines.append("TCP-Pose konnte nicht ermittelt werden")
+    return None, "\n".join(log_lines)
 
 
 def main():
     ip = input("Geben Sie die IP-Adresse des UR-Roboters ein: ")
     port_input = input("Port eingeben (Enter für automatische Suche): ").strip()
     ports = [int(port_input)] if port_input else [30002, 30003, 30001]
-    tcp_pos = get_tcp_position(ip, ports)
+    tcp_pos, log_msg = get_tcp_position(ip, ports)
     if tcp_pos:
         print("TCP-Position (mm, Grad):")
         print(f"X: {tcp_pos[0]:.3f}, Y: {tcp_pos[1]:.3f}, Z: {tcp_pos[2]:.3f}")
         print(f"RX: {tcp_pos[3]:.3f}, RY: {tcp_pos[4]:.3f}, RZ: {tcp_pos[5]:.3f}")
     else:
-        print("TCP-Position konnte nicht ermittelt werden.")
+        print(log_msg)
 
 
 if __name__ == "__main__":

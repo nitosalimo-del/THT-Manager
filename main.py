@@ -271,9 +271,6 @@ class ProduktManagerApp(ctk.CTk):
         # Listener-Port ist fest 34000 und wird nicht konfigurierbar angezeigt
         listener_label = ctk.CTkLabel(self.lima_panel, text="Listener Port: 34000")
         listener_label.grid(row=0, column=2, padx=5, pady=2)
-
-        rtde_label = ctk.CTkLabel(self.lima_panel, text="RTDE Port: 30004")
-        rtde_label.grid(row=0, column=3, padx=5, pady=2, sticky="w")
         
         # Send-IP
         self.send_ip_entry = ctk.CTkEntry(self.lima_panel, width=200)
@@ -290,6 +287,9 @@ class ProduktManagerApp(ctk.CTk):
         
         send_port_label = ctk.CTkLabel(self.lima_panel, text="Cobot Port (Send)")
         send_port_label.grid(row=3, column=1, padx=5)
+
+        rtde_label = ctk.CTkLabel(self.lima_panel, text="RTDE Port: 30004")
+        rtde_label.grid(row=3, column=2, padx=5)
         
         # Buttons
         test_btn = ctk.CTkButton(self.lima_panel, text="Verbindung testen", command=self._test_lima_connection)
@@ -762,14 +762,14 @@ class ProduktManagerApp(ctk.CTk):
             return None
 
         try:
-            pose = get_tcp_position(ip, [30002, 30003, 30001])
+            pose, log_msg = get_tcp_position(ip, [30002, 30003, 30001])
         except Exception as e:
             self.logger.error(f"UR TCP-Pose Fehler: {e}")
             self.message_handler.show_error("Fehler", f"TCP-Pose konnte nicht abgefragt werden: {e}")
             return None
 
         if not pose:
-            self.message_handler.show_error("Fehler", "TCP-Pose konnte nicht ermittelt werden")
+            self.message_handler.show_error("Fehler", log_msg)
             return None
 
         return pose
@@ -918,6 +918,7 @@ class ProduktManagerApp(ctk.CTk):
                 self._show_listener_log_window()  # Korrigierter Methodenname
 
                 self.sidebar_manager.set_listener_active(True)
+                self.status_manager.update_listener_status(True, f"{send_ip}:{send_port}")
                 self.message_handler.show_info("Listener gestartet", "Lauscht auf Port 34000")
                 self.logger.info("Listener-Modus gestartet auf Port 34000")
             else:
@@ -999,6 +1000,7 @@ class ProduktManagerApp(ctk.CTk):
 
         self.listener_start_time = None
         self.sidebar_manager.set_listener_active(False)
+        self.status_manager.update_listener_status(False)
 
         self.message_handler.show_info("Listener gestoppt", "Listener-Modus wurde beendet")
         self.logger.info("Listener-Modus gestoppt")
