@@ -1058,6 +1058,7 @@ class ProduktManagerApp(ctk.CTk):
                     self.listener_mode.send_ip,
                     self.listener_mode.send_port,
                     self.logger,
+                    self.listener_mode._log_event,
                 )
 
             # Zusätzliche Befehle verarbeiten

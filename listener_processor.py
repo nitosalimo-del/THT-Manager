@@ -1,7 +1,7 @@
 import re
 import socket
 import logging
-from typing import Optional, List
+from typing import Optional, List, Callable
 
 from database_manager import DatabaseManager
 
@@ -44,8 +44,19 @@ def _send_to_cobot(ip: str, port: int, message: str, read_ok: bool = True, timeo
             return False
 
 
-def handle_listener_payload(payload: str, db: DatabaseManager, send_ip: str, send_port: int, logger: logging.Logger) -> None:
-    """Verarbeitet eine Listener-Nachricht: WU extrahieren, DB-Lookup, Antwort senden."""
+def handle_listener_payload(payload: str, db: DatabaseManager, send_ip: str, send_port: int,
+                            logger: logging.Logger,
+                            log_event: Optional[Callable[[str, str, str], None]] = None) -> None:
+    """Verarbeitet eine Listener-Nachricht: WU extrahieren, DB-Lookup, Antwort senden.
+
+    Args:
+        payload: Empfangener Nachrichteninhalt.
+        db: Datenbankmanager für Produktinformationen.
+        send_ip: Ziel-IP für die Antwortnachricht.
+        send_port: Ziel-Port für die Antwortnachricht.
+        logger: Logger-Instanz für Statusmeldungen.
+        log_event: Optionaler Callback zum Protokollieren gesendeter Nachrichten.
+    """
     wu = _extract_wu(payload)
     if not wu:
         logger.info(f"Keine WU-Nummer erkannt in: {payload}")
@@ -53,6 +64,13 @@ def handle_listener_payload(payload: str, db: DatabaseManager, send_ip: str, sen
 
     row = _get_product_row_by_wu(db, wu)
     message = _format_row_as_underscore_string(row) if row else "NichtVorhanden"
+
+    # Gesendete Nachricht im Listener-Fenster anzeigen
+    if log_event:
+        try:
+            log_event("MESSAGE_SENT", message, send_ip)
+        except Exception:
+            pass
 
     ok = _send_to_cobot(send_ip, send_port, message)
     if not ok:
