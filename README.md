@@ -79,3 +79,44 @@ Die Anwendung ist ein THT‑Produktmanager mit einer grafischen Oberfläche (GUI
 
 
 Eine Software Anleitung für den Endutzer befindet sich in Arbeit. 
+
+
+🦾 RTDE-Integration (UR Cobot)
+
+Ab Version 2.0 unterstützt der THT-Manager die direkte Abfrage der aktuellen TCP-Pose des UR-Cobots über das RTDE-Protokoll (Port 30004).
+
+🔧 Funktionsweise
+
+Die Cobot-IP wird aus dem Feld „Cobot IP (Send)“ übernommen.
+
+Der Cobot Port (Send) bleibt frei wählbar für andere Funktionen.
+
+Der RTDE-Port (30004) wird im LIMA-Panel als Hinweis angezeigt und ist fest vorgegeben.
+
+Beim Klick auf „Abrufen“ neben den Feldern PosPCB_0 … PosPCB_4 wird die aktuelle Pose des Roboters gelesen.
+
+📋 Gespeicherte Daten
+
+Pose-Vektor im UR-Format:
+
+p[x, y, z, rx, ry, rz]
+
+Position in Metern
+
+Orientierung in Radiant
+
+Die Pose wird automatisch:
+
+in das jeweilige Eingabefeld im Formular geschrieben
+
+zusammen mit einem Zeitstempel in der Datenbank gespeichert
+
+✅ Vorteile
+
+Kein manuelles Copy-Paste der Roboter-Pose mehr nötig
+
+Einheitliche Datenbasis direkt im Produktdatensatz
+
+Robuste Verbindung durch RTDE-Handshake (Protokoll v2 → v1 Fallback)
+
+
