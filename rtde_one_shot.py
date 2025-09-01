@@ -65,7 +65,7 @@ def read_rtde_pose(host: str, timeout: float = 1.0) -> Tuple[float, float, float
         variables = "actual_TCP_pose".encode("utf-8")
         send(
             RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS,
-            struct.pack(">I%ds" % len(variables), 125, variables),
+            struct.pack(">HH%ds" % len(variables), 125, len(variables), variables),
         )
         cmd, payload = recv()
         if cmd != RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS or not payload:
