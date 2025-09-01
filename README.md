@@ -43,7 +43,7 @@ Die Anwendung ist ein THT‑Produktmanager mit einer grafischen Oberfläche (GUI
 
     SafeTimer: wiederholte Ausführung mit Thread‑Sicherheit.
 
-    WorkerQueue: einfache, thread‑sichere Aufgabenwarteschlange.
+    TaskQueue: verwaltet Aufgaben über einen ThreadPoolExecutor.
 
 7. ui_manager.py
 
