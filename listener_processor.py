@@ -4,6 +4,7 @@ import logging
 from typing import Optional, List, Callable
 
 from database_manager import DatabaseManager
+from config import Config
 
 WU_RE = re.compile(r"\bWU\d+\b")
 
@@ -23,10 +24,8 @@ def _format_row_as_underscore_string(row: dict, fields: List[str] | None = None)
     """Formatiert eine Datenbankzeile als Unterstrich-getrennten String."""
     if not row:
         return ""
-    if fields:
-        vals = [str(row.get(k, "")) for k in fields]
-    else:
-        vals = [str(row[k]) for k in sorted(row.keys())]
+    field_order = fields if fields is not None else Config.get_all_fields()
+    vals = [str(row.get(k, "")) for k in field_order]
     return "_".join(vals)
 
 
@@ -63,7 +62,11 @@ def handle_listener_payload(payload: str, db: DatabaseManager, send_ip: str, sen
         return
 
     row = _get_product_row_by_wu(db, wu)
-    message = _format_row_as_underscore_string(row) if row else "NichtVorhanden"
+    message = (
+        _format_row_as_underscore_string(row, Config.get_all_fields())
+        if row
+        else "NichtVorhanden"
+    )
 
     # Gesendete Nachricht im Listener-Fenster anzeigen
     if log_event:
