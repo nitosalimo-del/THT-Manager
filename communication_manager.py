@@ -75,8 +75,9 @@ class LimaClient:
             
             return attributes
         
-        except ET.XMLSyntaxError as e:
-            self.logger.error(f"XML-Parse-Fehler: {e}")
+        except ET.ParseError as e:
+            # Logge die komplette fehlerhafte XML-Antwort zur Analyse
+            self.logger.error(f"XML-Parse-Fehler: {e} - Antwort: {response}")
             return {}
         except Exception as e:
             self.logger.error(f"Fehler beim Parsen der LIMA-Response: {e}")
