@@ -5,10 +5,11 @@ from typing import Tuple
 
 RTDE_PORT = 30004
 RTDE_REQUEST_PROTOCOL_VERSION = 86
+RTDE_PROTOCOL_VERSION = 0x50
 RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS = 79
-RTDE_CONTROL_PACKAGE_START = 73
-RTDE_CONTROL_PACKAGE_STOP = 74
-RTDE_DATA_PACKAGE = 16
+RTDE_CONTROL_PACKAGE_START = 0x53
+RTDE_CONTROL_PACKAGE_STOP = 0x50
+RTDE_DATA_PACKAGE = 0x55
 
 log = logging.getLogger(__name__)
 
@@ -56,9 +57,14 @@ def read_rtde_pose(host: str, timeout: float = 1.0) -> Tuple[float, float, float
             return cmd, payload
 
         # Request protocol version 2
-        send(RTDE_REQUEST_PROTOCOL_VERSION, struct.pack(">H", 2))
+        protocol_version = 2
+        send(RTDE_REQUEST_PROTOCOL_VERSION, struct.pack(">H", protocol_version))
         cmd, payload = recv()
-        if cmd != RTDE_REQUEST_PROTOCOL_VERSION or not payload or payload[0] == 0:
+        if (
+            cmd != RTDE_PROTOCOL_VERSION
+            or len(payload) < 2
+            or struct.unpack(">H", payload[:2])[0] != protocol_version
+        ):
             raise RuntimeError("RTDE Protocol version not supported")
 
         # Setup outputs for actual_TCP_pose at 125Hz
