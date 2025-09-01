@@ -13,7 +13,12 @@ from typing import Optional, Dict, Any, List
 
 # Import der optimierten Module
 from config import Config
-from exceptions import *
+from exceptions import (
+    AuthenticationError,
+    CommunicationError,
+    DatabaseError,
+    ValidationError,
+)
 from validation import Validator
 from database_manager import DatabaseManager
 from communication_manager import LimaClient, RobotCommunicator, ListenerMode
