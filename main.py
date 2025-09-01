@@ -389,8 +389,9 @@ class ProduktManagerApp(ctk.CTk):
             
             if not password:
                 return
-            
-            if not Validator.validate_password(password, Config.ADMIN_PASSWORD):
+
+            password_hash = Config.get_admin_password_hash()
+            if not password_hash or not Validator.validate_password(password, password_hash):
                 raise AuthenticationError("Falsches Passwort")
             
             self.admin_mode = True

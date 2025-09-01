@@ -77,8 +77,26 @@ Die Anwendung ist ein THT‑Produktmanager mit einer grafischen Oberfläche (GUI
 
         UI‑Updates und Programmende (Cleanup).
 
+## Admin-Passwort konfigurieren
 
-Eine Software Anleitung für den Endutzer befindet sich in Arbeit. 
+Der Admin-Zugang verwendet einen bcrypt-Hash, der über die Umgebungsvariable
+`ADMIN_PASSWORD_HASH` bereitgestellt wird. Zum Setzen des Passworts:
+
+1. Hash erzeugen:
+   ```bash
+   python -c "import bcrypt, getpass; print(bcrypt.hashpw(getpass.getpass().encode(), bcrypt.gensalt()).decode())"
+   ```
+   Das Kommando fragt nach dem neuen Passwort und gibt den Hash aus.
+2. Hash als Umgebungsvariable setzen (Beispiel Linux/macOS):
+   ```bash
+   export ADMIN_PASSWORD_HASH='hier-den-ausgegebenen-hash-einfügen'
+   ```
+   Unter Windows kann die Variable über `set` oder die Systemsteuerung gesetzt werden.
+
+Beim Programmstart wird der Hash aus der Umgebung gelesen und eingegebene
+Passwörter werden dagegen geprüft.
+
+Eine Software Anleitung für den Endutzer befindet sich in Arbeit.
 
 
 🦾 RTDE-Integration (UR Cobot)

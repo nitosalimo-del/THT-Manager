@@ -5,6 +5,8 @@ import socket
 import re
 from typing import Any, Optional
 
+import bcrypt
+
 from exceptions import ValidationError
 from config import Config
 
@@ -65,9 +67,14 @@ class Validator:
         return isinstance(field, str) and field in Config.AF_FIELDS
     
     @staticmethod
-    def validate_password(password: str, expected: str) -> bool:
-        """Validiert Passwort"""
-        return password == expected
+    def validate_password(password: str, password_hash: str) -> bool:
+        """Prüft ein Passwort gegen einen bcrypt-Hash."""
+        if not password_hash:
+            return False
+        try:
+            return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+        except ValueError:
+            return False
     
     @staticmethod
     def sanitize_string(value: str) -> str:

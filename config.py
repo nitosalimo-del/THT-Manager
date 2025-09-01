@@ -7,9 +7,11 @@ import os
 class Config:
     # Datenbankeinstellungen
     DB_FILE = "produktkatalog.db"
-    
-    # Admin-Einstellungen
-    ADMIN_PASSWORD = "admin123"
+
+    @staticmethod
+    def get_admin_password_hash() -> str:
+        """Liest den Hash des Admin-Passworts aus der Umgebungsvariable."""
+        return os.environ.get("ADMIN_PASSWORD_HASH", "")
     
     # Dateipfade
     LIMA_CONFIG_FILE = "lima_config.json"
