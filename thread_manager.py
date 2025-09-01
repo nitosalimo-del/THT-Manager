@@ -3,7 +3,8 @@ Thread-Management für den THT-Produktmanager
 """
 import threading
 import logging
-from typing import List, Optional, Callable, Any
+from typing import List, Optional, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -154,65 +155,24 @@ class SafeTimer:
                 if self._running:
                     self._schedule_next()
 
-class WorkerQueue:
-    """Thread-sichere Arbeitsqueue"""
-    
+class TaskQueue:
+    """Einfache Aufgabenverwaltung auf Basis von ThreadPoolExecutor"""
+
     def __init__(self, max_workers: int = 1):
-        self.max_workers = max_workers
-        self.workers: List[threading.Thread] = []
-        self.queue: List[tuple] = []
-        self._lock = threading.Lock()
-        self._condition = threading.Condition(self._lock)
-        self._running = True
-        
-        # Worker-Threads starten
-        for i in range(max_workers):
-            worker = threading.Thread(
-                target=self._worker_loop,
-                name=f"Worker-{i+1}",
-                daemon=True
-            )
-            worker.start()
-            self.workers.append(worker)
-    
-    def put(self, func: Callable, *args, **kwargs) -> None:
-        """Fügt eine Aufgabe zur Queue hinzu"""
-        with self._condition:
-            if self._running:
-                self.queue.append((func, args, kwargs))
-                self._condition.notify()
-    
-    def _worker_loop(self) -> None:
-        """Worker-Thread-Schleife"""
-        while True:
-            with self._condition:
-                # Warten auf Arbeit
-                while self._running and not self.queue:
-                    self._condition.wait()
-                
-                if not self._running:
-                    break
-                
-                if self.queue:
-                    func, args, kwargs = self.queue.pop(0)
-                else:
-                    continue
-            
-            # Aufgabe außerhalb der Sperre ausführen
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    def submit(self, func: Callable, *args, **kwargs) -> None:
+        """Übermittelt eine Aufgabe zur asynchronen Ausführung"""
+
+        def wrapper():
             try:
                 func(*args, **kwargs)
             except Exception as e:
                 logger.error(f"Fehler in Worker-Task: {e}")
-    
-    def shutdown(self, timeout: float = 2.0) -> None:
-        """Beendet alle Worker-Threads"""
-        with self._condition:
-            self._running = False
-            self._condition.notify_all()
-        
-        for worker in self.workers:
-            worker.join(timeout=timeout)
-            if worker.is_alive():
-                logger.warning(f"Worker {worker.name} konnte nicht gestoppt werden")
-        
-        logger.info("WorkerQueue heruntergefahren")
+
+        self._executor.submit(wrapper)
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Fährt den Executor kontrolliert herunter"""
+        self._executor.shutdown(wait=wait)
+        logger.info("TaskQueue heruntergefahren")
