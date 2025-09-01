@@ -1,110 +1,168 @@
+"""RTDE One-Shot Client
+=======================
+
+Liest einmalig ``actual_TCP_pose`` von einem UR-kompatiblen RTDE-Server.
+
+Der Client richtet die Ausgaben ein, startet den RTDE-Datenstrom, wartet auf
+genau ein ``DATA_PACKAGE`` und beendet anschließend die Verbindung wieder. Die
+Pose wird in SI-Einheiten (m, rad) zurückgegeben.
+
+How-to-Test:
+    1. Dummy-Server mit ``127.0.0.1:30004`` starten (Streaming aus, mm/deg aus).
+    2. Im Programm die Roboter-IP auf ``127.0.0.1`` setzen.
+    3. Button "Position abfragen" klicken → Pose erscheint in der Spalte
+       "abgerufen" und wird in die Datenbank geschrieben.
+"""
+
+from __future__ import annotations
+
+import logging
 import socket
 import struct
-import logging
+from dataclasses import dataclass
 from typing import Tuple
 
-RTDE_PORT = 30004
-RTDE_REQUEST_PROTOCOL_VERSION = 86
-RTDE_PROTOCOL_VERSION = 0x50
-RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS = 79
-RTDE_CONTROL_PACKAGE_START = 0x53
-RTDE_CONTROL_PACKAGE_STOP = 0x50
-RTDE_DATA_PACKAGE = 0x55
+from exceptions import CommunicationError
 
 log = logging.getLogger(__name__)
 
 
-def _recv_exact(sock: socket.socket, length: int) -> bytes:
-    """Receive exactly *length* bytes from *sock*."""
+# RTDE Message Type IDs -----------------------------------------------------
+RTDE_REQUEST_PROTOCOL_VERSION = 0x56  # 'V'
+RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS = 0x4F  # 'O'
+RTDE_CONTROL_PACKAGE_START = 0x53  # 'S'
+RTDE_CONTROL_PACKAGE_PAUSE = 0x50  # 'P'
+RTDE_DATA_PACKAGE = 0x55  # 'U'
+
+RTDE_PORT = 30004
+
+MSG_NAMES = {
+    RTDE_REQUEST_PROTOCOL_VERSION: "REQUEST_PROTOCOL_VERSION",
+    RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS: "CONTROL_PACKAGE_SETUP_OUTPUTS",
+    RTDE_CONTROL_PACKAGE_START: "CONTROL_PACKAGE_START",
+    RTDE_CONTROL_PACKAGE_PAUSE: "CONTROL_PACKAGE_PAUSE",
+    RTDE_DATA_PACKAGE: "DATA_PACKAGE",
+}
+
+
+def _msg_name(msg_type: int) -> str:
+    return MSG_NAMES.get(msg_type, f"UNKNOWN(0x{msg_type:02X})")
+
+
+def _recv_exact(sock: socket.socket, size: int) -> bytes:
+    """Empfängt exakt ``size`` Bytes vom Socket oder löst ``CommunicationError`` aus."""
+
     data = b""
-    while len(data) < length:
-        chunk = sock.recv(length - len(data))
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
         if not chunk:
-            raise ConnectionError("Socket connection closed")
+            raise CommunicationError("RTDE: Verbindung unerwartet geschlossen")
         data += chunk
     return data
 
 
-def read_rtde_pose(host: str, timeout: float = 1.0) -> Tuple[float, float, float, float, float, float]:
-    """Liest einmalig die actual_TCP_pose via RTDE.
+@dataclass
+class RTDEOneShotClient:
+    """Minimaler RTDE-Client für eine einzige Pose."""
+
+    host: str
+    port: int = RTDE_PORT
+    timeout: float = 3.0
+
+    def _send_frame(self, sock: socket.socket, msg_type: int, payload: bytes = b"") -> None:
+        frame = struct.pack(">HB", len(payload) + 3, msg_type) + payload
+        sock.sendall(frame)
+        log.debug("RTDE: send %s", _msg_name(msg_type))
+
+    def _recv_frame(self, sock: socket.socket) -> Tuple[int, bytes]:
+        header = _recv_exact(sock, 3)
+        length, msg_type = struct.unpack(">HB", header)
+        payload = _recv_exact(sock, length - 3)
+        log.debug("RTDE: recv %s", _msg_name(msg_type))
+        return msg_type, payload
+
+    # Public API ------------------------------------------------------------
+    def read_pose(self) -> Tuple[float, float, float, float, float, float]:
+        """Liest ``actual_TCP_pose`` und gibt die Pose zurück."""
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(self.timeout)
+                sock.connect((self.host, self.port))
+
+                self._handshake(sock)
+
+                msg_type, payload = self._recv_frame(sock)
+                if msg_type != RTDE_DATA_PACKAGE:
+                    raise CommunicationError("RTDE: Erwartetes DATA_PACKAGE fehlt")
+                if len(payload) < 1 + 6 * 8:
+                    raise CommunicationError("RTDE: DATA_PACKAGE zu kurz")
+                if payload[0] != self.recipe_id:
+                    raise CommunicationError("RTDE: falsche recipe_id")
+
+                pose = struct.unpack(">6d", payload[1:49])
+
+                # Versuchsweise Pause senden (best effort)
+                try:
+                    self._send_frame(sock, RTDE_CONTROL_PACKAGE_PAUSE)
+                except OSError:
+                    pass
+
+                return pose
+
+        except (socket.timeout, OSError) as exc:
+            raise CommunicationError(f"RTDE: Netzwerkfehler: {exc}") from exc
+
+    # Internals -------------------------------------------------------------
+    def _handshake(self, sock: socket.socket) -> None:
+        """Führt RTDE-Handshake aus und speichert ``recipe_id``."""
+
+        # 1. Protokollversion anfordern
+        self._send_frame(sock, RTDE_REQUEST_PROTOCOL_VERSION, struct.pack(">H", 2))
+        msg_type, payload = self._recv_frame(sock)
+        if msg_type != RTDE_REQUEST_PROTOCOL_VERSION or len(payload) < 2:
+            raise CommunicationError("RTDE: Protokollversion nicht akzeptiert")
+        if struct.unpack(">H", payload[:2])[0] != 2:
+            raise CommunicationError("RTDE: Falsche Protokollversion")
+
+        # 2. Ausgaben für actual_TCP_pose konfigurieren
+        var = b"actual_TCP_pose"
+        payload = struct.pack(">HH", 125, len(var)) + var
+        self._send_frame(sock, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, payload)
+        msg_type, payload = self._recv_frame(sock)
+        if msg_type != RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS or len(payload) < 2:
+            raise CommunicationError("RTDE: Setup outputs fehlgeschlagen")
+        if payload[0] != 1:
+            raise CommunicationError("RTDE: Setup outputs rejected")
+        self.recipe_id = payload[1]
+
+        # 3. Starten
+        self._send_frame(sock, RTDE_CONTROL_PACKAGE_START)
+        msg_type, payload = self._recv_frame(sock)
+        if msg_type != RTDE_CONTROL_PACKAGE_START or len(payload) < 1 or payload[0] != 1:
+            raise CommunicationError("RTDE: Start failed")
+
+
+def read_rtde_pose(host: str, timeout: float = 3.0) -> Tuple[float, float, float, float, float, float]:
+    """Komfortfunktion für bestehenden Code.
 
     Args:
-        host: IP-Adresse des UR-Roboters
-        timeout: Socket-Timeout in Sekunden
-
-    Returns:
-        Tuple aus (x, y, z, rx, ry, rz) in SI-Einheiten.
-
-    Raises:
-        TimeoutError: wenn der Roboter nicht rechtzeitig antwortet
-        RuntimeError: bei Protokollfehlern
-        ConnectionError: bei Netzwerkproblemen
+        host: Ziel-Host des UR-Roboters oder Dummy-Servers.
+        timeout: Timeout in Sekunden.
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        log.debug("Connecting to %s:%s", host, RTDE_PORT)
-        sock.connect((host, RTDE_PORT))
 
-        def send(cmd: int, payload: bytes = b"") -> None:
-            size = len(payload) + 3
-            sock.sendall(struct.pack(">HB", size, cmd) + payload)
+    client = RTDEOneShotClient(host=host, timeout=timeout)
+    return client.read_pose()
 
-        def recv() -> Tuple[int, bytes]:
-            header = _recv_exact(sock, 3)
-            size, cmd = struct.unpack(">HB", header)
-            payload = _recv_exact(sock, size - 3)
-            return cmd, payload
 
-        # Request protocol version 2
-        protocol_version = 2
-        send(RTDE_REQUEST_PROTOCOL_VERSION, struct.pack(">H", protocol_version))
-        cmd, payload = recv()
-        if (
-            cmd != RTDE_PROTOCOL_VERSION
-            or len(payload) < 2
-            or struct.unpack(">H", payload[:2])[0] != protocol_version
-        ):
-            raise RuntimeError("RTDE Protocol version not supported")
+# ---------------------------------------------------------------------------
+# Einbaustellen
+# ---------------------------------------------------------------------------
+# Die Funktion ``read_rtde_pose`` wird in ``main._handle_position_request``
+# aufgerufen, wenn der Benutzer eine Position über die GUI abfragt.
 
-        # Setup outputs for actual_TCP_pose at 125Hz
-        variables = "actual_TCP_pose".encode("utf-8")
-        send(
-            RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS,
-            struct.pack(">HH%ds" % len(variables), 125, len(variables), variables),
-        )
-        cmd, payload = recv()
-        if cmd != RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS or not payload:
-            raise RuntimeError("Failed to setup RTDE outputs")
-        recipe_id = payload[0]
+# How-to-Test:
+# 1. RTDE-Dummy auf 127.0.0.1:30004 starten.
+# 2. Im Programm Roboter-IP auf 127.0.0.1 setzen.
+# 3. In der GUI "Position abfragen" drücken → Pose erscheint und wird gespeichert.
 
-        # Start data transmission
-        send(RTDE_CONTROL_PACKAGE_START)
-        cmd, payload = recv()
-        if cmd != RTDE_CONTROL_PACKAGE_START or not payload or payload[0] == 0:
-            raise RuntimeError("RTDE start failed")
-
-        # Read one data package
-        cmd, payload = recv()
-        if cmd != RTDE_DATA_PACKAGE or not payload or payload[0] != recipe_id:
-            raise RuntimeError("Invalid RTDE data package")
-        if len(payload) < 1 + 6 * 8:
-            raise RuntimeError("Incomplete RTDE pose data")
-        pose = struct.unpack(">6d", payload[1:49])
-
-        return pose
-
-    except socket.timeout as exc:
-        raise TimeoutError("RTDE timeout") from exc
-    except ConnectionError:
-        raise
-    except Exception as exc:
-        log.exception("RTDE communication error")
-        raise RuntimeError("RTDE communication error") from exc
-    finally:
-        try:
-            sock.settimeout(0.5)
-            send(RTDE_CONTROL_PACKAGE_STOP)
-        except Exception:
-            pass
-        sock.close()
