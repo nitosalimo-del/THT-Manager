@@ -13,10 +13,10 @@ from rtde_one_shot import (
     RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS,
     RTDE_CONTROL_PACKAGE_START,
     RTDE_DATA_PACKAGE,
+    RTDE_PORT,
     RTDE_PROTOCOL_VERSION_REPLY,
     RTDE_REQUEST_PROTOCOL_VERSION,
     RTDE_TEXT_MESSAGE_UR,
-    RTDE_PORT,
     RTDEOneShotClient,
     frame_str,
     hexdump,
@@ -24,6 +24,7 @@ from rtde_one_shot import (
     recv_frame,
     send_frame,
     type_name,
+    convert_pose_m_rad_to_mm_deg,
 )
 
 
@@ -98,7 +99,7 @@ def test_read_rtde_pose() -> None:
     pose = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
     thread = _start_dummy_server(pose, send_text=True)
     result = read_rtde_pose("127.0.0.1", timeout=1.0, debug=True)
-    assert result == pytest.approx(pose)
+    assert result == pytest.approx(convert_pose_m_rad_to_mm_deg(pose))
     thread.join(timeout=0.1)
 
 
@@ -107,6 +108,54 @@ def test_version_fallback() -> None:
     thread = _start_dummy_server(pose, accept_version=1)
     client = RTDEOneShotClient(host="127.0.0.1", timeout=1.0)
     result = client.read_pose()
-    assert result == pytest.approx(pose)
+    assert result == pytest.approx(convert_pose_m_rad_to_mm_deg(pose))
     thread.join(timeout=0.1)
+
+
+def _start_failing_rtde_server() -> threading.Thread:
+    def server() -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("127.0.0.1", RTDE_PORT))
+            srv.listen(1)
+            conn, _ = srv.accept()
+            with conn:
+                msg_type, payload = _recv_frame(conn)
+                assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
+                _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x00")
+                msg_type, payload = _recv_frame(conn)
+                assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
+                _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x00")
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    return thread
+
+
+def _start_secondary_server(pose: tuple[float, ...], port: int) -> threading.Thread:
+    def server() -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("127.0.0.1", port))
+            srv.listen(1)
+            conn, _ = srv.accept()
+            with conn:
+                _ = conn.recv(1024)
+                conn.sendall(str(list(pose)).encode() + b"\n")
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    return thread
+
+
+def test_fallback_secondary() -> None:
+    pose = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
+    rtde_thread = _start_failing_rtde_server()
+    sec_port = 30002
+    sec_thread = _start_secondary_server(pose, sec_port)
+    client = RTDEOneShotClient(host="127.0.0.1", timeout=1.0, sec_port=sec_port)
+    result = client.read_pose()
+    assert result == pytest.approx(convert_pose_m_rad_to_mm_deg(pose))
+    rtde_thread.join(timeout=0.1)
+    sec_thread.join(timeout=0.1)
 
