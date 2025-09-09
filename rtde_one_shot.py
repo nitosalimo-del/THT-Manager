@@ -158,49 +158,61 @@ class RTDEOneShotClient:
     def read_pose(self) -> Tuple[float, float, float, float, float, float]:
         """Führt den RTDE-Handshake aus und liefert die TCP-Pose."""
 
-        try:
-            with socket.create_connection((self.host, self.port), self.timeout) as sock:
-                sock.settimeout(self.timeout)
-                self._handshake(sock)
-                msg_type, payload = recv_non_text(sock)
-                if msg_type != RTDE_DATA_PACKAGE:
-                    self._unexpected(RTDE_DATA_PACKAGE, msg_type, payload, "beim Warten auf DATA_PACKAGE")
-                if len(payload) < 1 + 6 * 8:
-                    msg = f"RTDE: zu kurzes DATA_PACKAGE: {frame_str(msg_type, payload)}"
-                    log.error(msg)
-                    raise CommunicationError(msg)
-                recipe = payload[0]
-                if recipe != self.recipe_id:
-                    msg = (
-                        f"RTDE: recipe_id-Mismatch, erwartet {self.recipe_id}, erhalten {recipe}"
-                    )
-                    log.error(msg)
-                    raise CommunicationError(msg)
-                pose = struct.unpack(">6d", payload[1:49])
-                try:
-                    send_frame(sock, RTDE_CONTROL_PACKAGE_PAUSE)
-                    recv_non_text(sock)  # Antwort ignorieren
-                except Exception:  # pragma: no cover - Pause darf fehlschlagen
-                    pass
-                log.info("RTDE: Pose empfangen")
-                return pose
-        except OSError as exc:  # pragma: no cover - Netzfehler
-            msg = f"RTDE: Netzwerkfehler {exc}"
-            log.error(msg)
-            raise CommunicationError(msg) from exc
+        last_error: Exception | None = None
+        for version in (2, 1):
+            try:
+                with socket.create_connection((self.host, self.port), self.timeout) as sock:
+                    sock.settimeout(self.timeout)
+                    self._handshake(sock, version)
+                    msg_type, payload = recv_non_text(sock)
+                    if msg_type != RTDE_DATA_PACKAGE:
+                        self._unexpected(
+                            RTDE_DATA_PACKAGE,
+                            msg_type,
+                            payload,
+                            "beim Warten auf DATA_PACKAGE",
+                        )
+                    if len(payload) < 1 + 6 * 8:
+                        msg = f"RTDE: zu kurzes DATA_PACKAGE: {frame_str(msg_type, payload)}"
+                        log.error(msg)
+                        raise CommunicationError(msg)
+                    recipe = payload[0]
+                    if recipe != self.recipe_id:
+                        msg = (
+                            f"RTDE: recipe_id-Mismatch, erwartet {self.recipe_id}, erhalten {recipe}"
+                        )
+                        log.error(msg)
+                        raise CommunicationError(msg)
+                    pose = struct.unpack(">6d", payload[1:49])
+                    try:
+                        send_frame(sock, RTDE_CONTROL_PACKAGE_PAUSE)
+                        recv_non_text(sock)  # Antwort ignorieren
+                    except Exception:  # pragma: no cover - Pause darf fehlschlagen
+                        pass
+                    log.info("RTDE: Pose empfangen")
+                    return pose
+            except (OSError, CommunicationError) as exc:
+                last_error = exc
+                log.warning(
+                    "RTDE: Versuch mit Protokollversion %d fehlgeschlagen: %s", version, exc
+                )
+                continue
+        msg = "RTDE: Protokollversion nicht akzeptiert"
+        if last_error:
+            msg += f" ({last_error})"
+        log.error(msg)
+        raise CommunicationError(msg)
 
     # ------------------------------------------------------------------
-    def _handshake(self, sock: socket.socket) -> None:
+    def _handshake(self, sock: socket.socket, version: int) -> None:
         """Verhandelt die Protokollversion und startet den Datenstrom."""
 
-        if not self._request_version(sock, 2):
-            log.warning("RTDE: Version 2 abgelehnt, versuche Version 1")
-            if not self._request_version(sock, 1):
-                msg = "RTDE: Protokollversion nicht akzeptiert"
-                log.error(msg)
-                raise CommunicationError(msg)
+        if not self._request_version(sock, version):
+            msg = f"RTDE: Protokollversion {version} abgelehnt"
+            log.error(msg)
+            raise CommunicationError(msg)
 
-        payload = struct.pack(">d", 125.0) + b"actual_TCP_pose"
+        payload = struct.pack(">d", 125.0) + b"actual_TCP_pose\x00"
         send_frame(sock, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, payload)
         msg_type, payload = recv_non_text(sock)
         if msg_type != RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS or len(payload) < 1:

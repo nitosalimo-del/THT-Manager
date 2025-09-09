@@ -46,9 +46,10 @@ def _recv_frame(conn: socket.socket) -> tuple[int, bytes]:
 def _start_dummy_server(
     pose: tuple[float, ...],
     *,
-    accept_version: int = 2,
     send_text: bool = False,
 ) -> threading.Thread:
+    """Startet einen Dummy-Server, der Version 2 akzeptiert."""
+
     def server() -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -60,13 +61,56 @@ def _start_dummy_server(
                 assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
                 if send_text:
                     _send_frame(conn, RTDE_TEXT_MESSAGE_UR, b"dummy")
-                if accept_version == 2:
-                    _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x01")
-                else:
-                    _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x00")
-                    msg_type, payload = _recv_frame(conn)
-                    assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
-                    _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x01")
+                _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x01")
+
+                msg_type, payload = _recv_frame(conn)
+                assert msg_type == RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS
+                _send_frame(conn, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, b"\x05types")
+
+                msg_type, payload = _recv_frame(conn)
+                assert msg_type == RTDE_CONTROL_PACKAGE_START
+                _send_frame(conn, RTDE_CONTROL_PACKAGE_START, b"\x01")
+
+                _send_frame(
+                    conn,
+                    RTDE_DATA_PACKAGE,
+                    b"\x05" + struct.pack(">6d", *pose),
+                )
+                conn.settimeout(0.2)
+                try:
+                    msg_type, _ = _recv_frame(conn)
+                    assert msg_type == RTDE_CONTROL_PACKAGE_PAUSE
+                except Exception:
+                    pass
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    return thread
+
+
+def _start_dummy_server_reconnect(pose: tuple[float, ...]) -> threading.Thread:
+    """Dummy-Server, der die erste Verbindung ablehnt und danach akzeptiert."""
+
+    def server() -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("127.0.0.1", RTDE_PORT))
+            srv.listen(2)
+
+            # Erste Verbindung: Version ablehnen und schließen
+            conn, _ = srv.accept()
+            with conn:
+                msg_type, payload = _recv_frame(conn)
+                assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
+                _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x00")
+
+            # Zweite Verbindung: normale Kommunikation
+            conn, _ = srv.accept()
+            with conn:
+                msg_type, payload = _recv_frame(conn)
+                assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
+                _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x01")
 
                 msg_type, payload = _recv_frame(conn)
                 assert msg_type == RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS
@@ -104,7 +148,7 @@ def test_read_rtde_pose() -> None:
 
 def test_version_fallback() -> None:
     pose = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
-    thread = _start_dummy_server(pose, accept_version=1)
+    thread = _start_dummy_server_reconnect(pose)
     client = RTDEOneShotClient(host="127.0.0.1", timeout=1.0)
     result = client.read_pose()
     assert result == pytest.approx(pose)
