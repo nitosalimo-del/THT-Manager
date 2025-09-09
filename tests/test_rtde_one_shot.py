@@ -9,6 +9,8 @@ import pytest
 os.sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from rtde_one_shot import (
+    frame_str,
+    hexdump,
     RTDE_CONTROL_PACKAGE_PAUSE,
     RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS,
     RTDE_CONTROL_PACKAGE_START,
@@ -19,7 +21,16 @@ from rtde_one_shot import (
     RTDE_PORT,
     RTDEOneShotClient,
     read_rtde_pose,
+    type_name,
 )
+
+
+def test_util_functions() -> None:
+    data = bytes([0, 1, 2, 255])
+    assert hexdump(data) == "00 01 02 FF"
+    assert type_name(RTDE_REQUEST_PROTOCOL_VERSION) == "REQUEST_PROTOCOL_VERSION"
+    fstr = frame_str(RTDE_REQUEST_PROTOCOL_VERSION, b"\x00\x02")
+    assert "type=0x56" in fstr and "len=2" in fstr and "00 02" in fstr
 
 
 def _send_frame(conn: socket.socket, msg_type: int, payload: bytes = b"") -> None:
