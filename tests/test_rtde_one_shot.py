@@ -9,11 +9,15 @@ import pytest
 os.sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from rtde_one_shot import (
+    RTDE_CONTROL_PACKAGE_PAUSE,
     RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS,
     RTDE_CONTROL_PACKAGE_START,
     RTDE_DATA_PACKAGE,
-    RTDE_PORT,
+    RTDE_PROTOCOL_VERSION_REPLY,
     RTDE_REQUEST_PROTOCOL_VERSION,
+    RTDE_TEXT_MESSAGE,
+    RTDE_PORT,
+    RTDEOneShotClient,
     read_rtde_pose,
 )
 
@@ -31,7 +35,12 @@ def _recv_frame(conn: socket.socket) -> tuple[int, bytes]:
     return msg_type, payload
 
 
-def _start_dummy_server(pose: tuple[float, ...]) -> threading.Thread:
+def _start_dummy_server(
+    pose: tuple[float, ...],
+    *,
+    accepted_version: int = 2,
+    send_text: bool = False,
+) -> threading.Thread:
     def server() -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -41,12 +50,26 @@ def _start_dummy_server(pose: tuple[float, ...]) -> threading.Thread:
             with conn:
                 msg_type, payload = _recv_frame(conn)
                 assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
-                ver = struct.unpack(">H", payload)[0]
-                _send_frame(conn, RTDE_REQUEST_PROTOCOL_VERSION, struct.pack(">H", ver))
+                if send_text:
+                    _send_frame(conn, RTDE_TEXT_MESSAGE, b"dummy")
+                _send_frame(
+                    conn,
+                    RTDE_PROTOCOL_VERSION_REPLY,
+                    struct.pack(">H", accepted_version),
+                )
+                if accepted_version != struct.unpack(">H", payload)[0]:
+                    # Expect fallback to version 1
+                    msg_type, payload = _recv_frame(conn)
+                    assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
+                    _send_frame(
+                        conn,
+                        RTDE_PROTOCOL_VERSION_REPLY,
+                        struct.pack(">H", accepted_version),
+                    )
 
                 msg_type, payload = _recv_frame(conn)
                 assert msg_type == RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS
-                _send_frame(conn, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, b"\x01\x01")
+                _send_frame(conn, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, b"\x01\x05")
 
                 msg_type, payload = _recv_frame(conn)
                 assert msg_type == RTDE_CONTROL_PACKAGE_START
@@ -55,11 +78,12 @@ def _start_dummy_server(pose: tuple[float, ...]) -> threading.Thread:
                 _send_frame(
                     conn,
                     RTDE_DATA_PACKAGE,
-                    b"\x01" + struct.pack(">6d", *pose),
+                    b"\x05" + struct.pack(">6d", *pose),
                 )
 
                 try:
-                    _recv_frame(conn)  # optional pause
+                    msg_type, _ = _recv_frame(conn)
+                    assert msg_type == RTDE_CONTROL_PACKAGE_PAUSE
                 except Exception:
                     pass
 
@@ -71,8 +95,16 @@ def _start_dummy_server(pose: tuple[float, ...]) -> threading.Thread:
 
 def test_read_rtde_pose() -> None:
     pose = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
-    thread = _start_dummy_server(pose)
+    thread = _start_dummy_server(pose, send_text=True)
     result = read_rtde_pose("127.0.0.1", timeout=1.0)
     assert result == pytest.approx(pose)
     thread.join(timeout=0.1)
 
+
+def test_version_fallback() -> None:
+    pose = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
+    thread = _start_dummy_server(pose, accepted_version=1)
+    client = RTDEOneShotClient(host="127.0.0.1", timeout=1.0)
+    result = client.read_pose()
+    assert result == pytest.approx(pose)
+    thread.join(timeout=0.1)
