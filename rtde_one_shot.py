@@ -1,12 +1,20 @@
 """RTDE One-Shot Client
 =======================
 
-Liest einmalig ``actual_TCP_pose`` von einem UR-kompatiblen RTDE-Server und
-liefert die Pose in Metern und Radiant.
+Liest einmalig ``actual_TCP_pose`` von einem UR-kompatiblen RTDE-Server.
+Unterstützt Protokollversion 2 mit Fallback auf Version 1. Bei jeder
+unerwarteten Antwort werden Typ, Länge und ein Hexdump des Payloads
+ausgegeben. Textnachrichten werden übersprungen, aber im Debug-Modus
+protokolliert.
 
-Der Client implementiert die nötige Version-Aushandlung mit Fallback auf
-Protokollversion 1 und gibt bei Fehlern ausführliche Diagnosen aus.
+Benutzung::
+
+    python rtde_one_shot.py --host 10.3.218.4 --port 30004 --debug
+
+Die Funktion :func:`read_rtde_pose` bietet eine einfache API für andere
+Module.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,51 +25,54 @@ from typing import Tuple
 
 from exceptions import CommunicationError
 
-# -- Konstanten ---------------------------------------------------------------
-REQUEST_PROTOCOL_VERSION = 0x56  # 'V'
-PROTOCOL_VERSION_REPLY = 0x50  # 'P'
-CONTROL_PACKAGE_SETUP_OUTPUTS = 0x4F  # 'O'
-CONTROL_PACKAGE_START = 0x53  # 'S'
-CONTROL_PACKAGE_PAUSE = 0x50  # 'P'
-DATA_PACKAGE = 0x55  # 'U'
-TEXT_MESSAGE = 0x62  # 'b'
+# ---------------------------------------------------------------------------
+# Konstanten laut UR-RTDE-Protokoll
+# ---------------------------------------------------------------------------
+RTDE_REQUEST_PROTOCOL_VERSION = 0x56  # 'V'
+RTDE_PROTOCOL_VERSION_REPLY = RTDE_REQUEST_PROTOCOL_VERSION
+RTDE_GET_URCONTROL_VERSION = 0x76  # 'v'
+RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS = 0x4F  # 'O'
+RTDE_CONTROL_PACKAGE_SETUP_INPUTS = 0x49  # 'I'
+RTDE_CONTROL_PACKAGE_START = 0x53  # 'S'
+RTDE_CONTROL_PACKAGE_PAUSE = 0x50  # 'P'
+RTDE_DATA_PACKAGE = 0x55  # 'U'
+RTDE_TEXT_MESSAGE_UR = 0x4D  # 'M'
+RTDE_TEXT_MESSAGE_DUMMY = 0x62  # 'b'
+RTDE_TEXT_MESSAGES = {RTDE_TEXT_MESSAGE_UR, RTDE_TEXT_MESSAGE_DUMMY}
 
 RTDE_PORT = 30004
 
-# Öffentliche Aliase (für Tests)
-RTDE_REQUEST_PROTOCOL_VERSION = REQUEST_PROTOCOL_VERSION
-RTDE_PROTOCOL_VERSION_REPLY = PROTOCOL_VERSION_REPLY
-RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS = CONTROL_PACKAGE_SETUP_OUTPUTS
-RTDE_CONTROL_PACKAGE_START = CONTROL_PACKAGE_START
-RTDE_CONTROL_PACKAGE_PAUSE = CONTROL_PACKAGE_PAUSE
-RTDE_DATA_PACKAGE = DATA_PACKAGE
-RTDE_TEXT_MESSAGE = TEXT_MESSAGE
 
 log = logging.getLogger(__name__)
 
 
-# -- Hilfsfunktionen ---------------------------------------------------------
-def hexdump(b: bytes, max_len: int = 64) -> str:
-    """Gibt die ersten ``max_len`` Bytes als Hex-String zurück."""
-    return " ".join(f"{byte:02X}" for byte in b[:max_len])
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen
+# ---------------------------------------------------------------------------
+def hexdump(data: bytes, max_len: int = 64) -> str:
+    """Gibt die ersten ``max_len`` Bytes eines Byte-Strings als Hexdump zurück."""
+
+    return " ".join(f"{b:02X}" for b in data[:max_len])
 
 
 def type_name(msg_type: int) -> str:
-    """Liefert den bekannten Namen eines Message-Typs."""
+    """Ermittelt den bekannten Namen eines RTDE-Message-Typs."""
+
     names = {
-        REQUEST_PROTOCOL_VERSION: "REQUEST_PROTOCOL_VERSION",
-        PROTOCOL_VERSION_REPLY: "PROTOCOL_VERSION_REPLY",
-        CONTROL_PACKAGE_SETUP_OUTPUTS: "CONTROL_PACKAGE_SETUP_OUTPUTS",
-        CONTROL_PACKAGE_START: "CONTROL_PACKAGE_START",
-        CONTROL_PACKAGE_PAUSE: "CONTROL_PACKAGE_PAUSE",
-        DATA_PACKAGE: "DATA_PACKAGE",
-        TEXT_MESSAGE: "TEXT_MESSAGE",
+        RTDE_REQUEST_PROTOCOL_VERSION: "REQUEST_PROTOCOL_VERSION",
+        RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS: "CONTROL_PACKAGE_SETUP_OUTPUTS",
+        RTDE_CONTROL_PACKAGE_START: "CONTROL_PACKAGE_START",
+        RTDE_CONTROL_PACKAGE_PAUSE: "CONTROL_PACKAGE_PAUSE",
+        RTDE_DATA_PACKAGE: "DATA_PACKAGE",
+        RTDE_TEXT_MESSAGE_UR: "TEXT_MESSAGE_UR",
+        RTDE_TEXT_MESSAGE_DUMMY: "TEXT_MESSAGE_DUMMY",
     }
     return names.get(msg_type, "UNKNOWN")
 
 
 def frame_str(msg_type: int, payload: bytes) -> str:
-    """Formatiert Typ, Länge und Hexdump eines Frames."""
+    """Formatiert Typ, Länge und Hexdump eines RTDE-Frames."""
+
     char = chr(msg_type) if 32 <= msg_type <= 126 else "?"
     return (
         f"type=0x{msg_type:02X}('{char}','{type_name(msg_type)}'), "
@@ -69,7 +80,62 @@ def frame_str(msg_type: int, payload: bytes) -> str:
     )
 
 
-# -- Kernfunktionalität ------------------------------------------------------
+def send_frame(sock: socket.socket, msg_type: int, payload: bytes = b"") -> None:
+    """Sendet ein vollständiges RTDE-Frame."""
+
+    frame = struct.pack(">HB", len(payload) + 3, msg_type) + payload
+    sock.sendall(frame)
+    log.debug("RTDE: send %s", frame_str(msg_type, payload))
+
+
+def _recv_exact(sock: socket.socket, size: int, context: str) -> bytes:
+    """Liest exakt ``size`` Bytes vom Socket."""
+
+    data = b""
+    while len(data) < size:
+        try:
+            chunk = sock.recv(size - len(data))
+        except socket.timeout as exc:  # pragma: no cover - Netzfehler
+            msg = f"RTDE: Timeout beim Lesen {context}"
+            log.error(msg)
+            raise CommunicationError(msg) from exc
+        if not chunk:
+            msg = f"RTDE: Verbindung beendet {context}"
+            log.error(msg)
+            raise CommunicationError(msg)
+        data += chunk
+    return data
+
+
+def recv_frame(sock: socket.socket) -> Tuple[int, bytes]:
+    """Empfängt ein RTDE-Frame."""
+
+    header = _recv_exact(sock, 3, "des Frame-Headers")
+    length, msg_type = struct.unpack(">HB", header)
+    if length < 3:
+        msg = f"RTDE: unplausible Laenge {length} im Header"
+        log.error(msg)
+        raise CommunicationError(msg)
+    payload = _recv_exact(sock, length - 3, "des Frame-Payloads")
+    log.debug("RTDE: recv %s", frame_str(msg_type, payload))
+    return msg_type, payload
+
+
+def recv_non_text(sock: socket.socket) -> Tuple[int, bytes]:
+    """Empfängt das nächste Nicht-Text-RTDE-Frame."""
+
+    while True:
+        msg_type, payload = recv_frame(sock)
+        if msg_type in RTDE_TEXT_MESSAGES:
+            text = payload.decode("utf-8", errors="replace").strip()
+            log.debug("RTDE: Textnachricht ignoriert: %s", text)
+            continue
+        return msg_type, payload
+
+
+# ---------------------------------------------------------------------------
+# Kernfunktionalität
+# ---------------------------------------------------------------------------
 class RTDEOneShotClient:
     """RTDE-Client, der genau ein ``DATA_PACKAGE`` liest."""
 
@@ -88,171 +154,124 @@ class RTDEOneShotClient:
         if debug:
             log.setLevel(logging.DEBUG)
 
-    # -- Low-Level Frame Handling -----------------------------------------
-    def _send_frame(self, sock: socket.socket, msg_type: int, payload: bytes = b"") -> None:
-        frame = struct.pack(">HB", len(payload) + 3, msg_type) + payload
-        sock.sendall(frame)
-        log.debug("send %s", frame_str(msg_type, payload))
+    # ------------------------------------------------------------------
+    def read_pose(self) -> Tuple[float, float, float, float, float, float]:
+        """Führt den RTDE-Handshake aus und liefert die TCP-Pose."""
 
-    def _recv_exact(self, sock: socket.socket, size: int, context: str) -> bytes:
-        data = b""
-        while len(data) < size:
-            try:
-                chunk = sock.recv(size - len(data))
-            except socket.timeout as exc:
-                msg = f"RTDE {self.host}:{self.port}: Timeout beim Lesen {context}"
-                log.error(msg)
-                raise CommunicationError(msg) from exc
-            if not chunk:
-                msg = f"RTDE {self.host}:{self.port}: Verbindung beendet {context}"
-                log.error(msg)
-                raise CommunicationError(msg)
-            data += chunk
-        return data
-
-    def _recv_frame(self, sock: socket.socket) -> tuple[int, bytes]:
-        header = self._recv_exact(sock, 3, "des Frame-Headers")
-        length, msg_type = struct.unpack(">HB", header)
-        if length < 3:
-            msg = (
-                f"RTDE {self.host}:{self.port}: unplausible Laenge {length} "
-                f"im Header"
-            )
-            log.error(msg)
-            raise CommunicationError(msg)
-        payload = self._recv_exact(sock, length - 3, "des Frame-Payloads")
-        log.debug("recv %s", frame_str(msg_type, payload))
-        return msg_type, payload
-
-    def _recv_non_text(self, sock: socket.socket) -> tuple[int, bytes]:
-        """Liest das nächste Nicht-Text-Frame."""
-        while True:
-            msg_type, payload = self._recv_frame(sock)
-            if msg_type == TEXT_MESSAGE:
-                text = payload.decode("utf-8", errors="ignore").strip()
-                log.info("RTDE Text: %s", text)
-                continue
-            return msg_type, payload
-
-    # -- Fehlerbehandlung --------------------------------------------------
-    def _raise_unexpected(
-        self, expected: int, msg_type: int, payload: bytes, context: str
-    ) -> None:
-        exp_name = type_name(expected)
-        msg = (
-            f"RTDE {self.host}:{self.port}: erwartet {exp_name}, erhalten "
-            f"{frame_str(msg_type, payload)} {context}"
-        )
-        log.error(msg)
-        raise CommunicationError(msg)
-
-    # -- Öffentliche API ---------------------------------------------------
-    def read_pose(self) -> tuple[float, float, float, float, float, float]:
-        """Führt Handshake aus und liefert die aktuelle TCP-Pose."""
         try:
             with socket.create_connection((self.host, self.port), self.timeout) as sock:
                 sock.settimeout(self.timeout)
                 self._handshake(sock)
-                msg_type, payload = self._recv_non_text(sock)
-                if msg_type != DATA_PACKAGE:
-                    self._raise_unexpected(
-                        DATA_PACKAGE, msg_type, payload, "beim Warten auf DATA_PACKAGE"
-                    )
-                if len(payload) < 49:  # 1 + 6 * 8
-                    msg = (
-                        f"RTDE {self.host}:{self.port}: zu kurzes DATA_PACKAGE: "
-                        f"{frame_str(msg_type, payload)}"
-                    )
+                msg_type, payload = recv_non_text(sock)
+                if msg_type != RTDE_DATA_PACKAGE:
+                    self._unexpected(RTDE_DATA_PACKAGE, msg_type, payload, "beim Warten auf DATA_PACKAGE")
+                if len(payload) < 1 + 6 * 8:
+                    msg = f"RTDE: zu kurzes DATA_PACKAGE: {frame_str(msg_type, payload)}"
                     log.error(msg)
                     raise CommunicationError(msg)
                 recipe = payload[0]
                 if recipe != self.recipe_id:
                     msg = (
-                        f"RTDE {self.host}:{self.port}: recipe_id-Mismatch, erwartet "
-                        f"{self.recipe_id}, erhalten {recipe}"
+                        f"RTDE: recipe_id-Mismatch, erwartet {self.recipe_id}, erhalten {recipe}"
                     )
                     log.error(msg)
                     raise CommunicationError(msg)
                 pose = struct.unpack(">6d", payload[1:49])
                 try:
-                    self._send_frame(sock, CONTROL_PACKAGE_PAUSE)
-                except OSError:
+                    send_frame(sock, RTDE_CONTROL_PACKAGE_PAUSE)
+                    recv_non_text(sock)  # Antwort ignorieren
+                except Exception:  # pragma: no cover - Pause darf fehlschlagen
                     pass
-                log.info("Pose empfangen")
+                log.info("RTDE: Pose empfangen")
                 return pose
-        except OSError as exc:
-            msg = f"RTDE {self.host}:{self.port}: Netzwerkfehler {exc}"
+        except OSError as exc:  # pragma: no cover - Netzfehler
+            msg = f"RTDE: Netzwerkfehler {exc}"
             log.error(msg)
             raise CommunicationError(msg) from exc
 
-    # -- Interner Ablauf ---------------------------------------------------
+    # ------------------------------------------------------------------
     def _handshake(self, sock: socket.socket) -> None:
-        accepted = self._request_version(sock, 2)
-        if accepted != 2:
-            log.warning("Version 2 abgelehnt (Server: %d)", accepted)
-            accepted = self._request_version(sock, 1)
-            if accepted != 1:
-                payload = struct.pack(">H", accepted)
-                msg = (
-                    f"RTDE {self.host}:{self.port}: Protokollversion nicht akzeptiert: "
-                    f"{frame_str(PROTOCOL_VERSION_REPLY, payload)}"
-                )
+        """Verhandelt die Protokollversion und startet den Datenstrom."""
+
+        if not self._request_version(sock, 2):
+            log.warning("RTDE: Version 2 abgelehnt, versuche Version 1")
+            if not self._request_version(sock, 1):
+                msg = "RTDE: Protokollversion nicht akzeptiert"
                 log.error(msg)
                 raise CommunicationError(msg)
 
-        var = b"actual_TCP_pose"
-        payload = struct.pack(">HH", 125, len(var)) + var
-        self._send_frame(sock, CONTROL_PACKAGE_SETUP_OUTPUTS, payload)
-        msg_type, payload = self._recv_non_text(sock)
-        if msg_type != CONTROL_PACKAGE_SETUP_OUTPUTS or len(payload) < 2:
-            self._raise_unexpected(
-                CONTROL_PACKAGE_SETUP_OUTPUTS,
+        payload = struct.pack(">d", 125.0) + b"actual_TCP_pose"
+        send_frame(sock, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, payload)
+        msg_type, payload = recv_non_text(sock)
+        if msg_type != RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS or len(payload) < 1:
+            self._unexpected(
+                RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS,
                 msg_type,
                 payload,
                 "waehrend SETUP_OUTPUTS",
             )
-        if payload[0] != 1:
-            msg = (
-                f"RTDE {self.host}:{self.port}: SETUP_OUTPUTS rejected: "
-                f"{frame_str(msg_type, payload)}"
-            )
+        recipe = payload[0]
+        if recipe == 0:
+            msg = f"RTDE: SETUP_OUTPUTS abgelehnt: {frame_str(msg_type, payload)}"
             log.error(msg)
             raise CommunicationError(msg)
-        self.recipe_id = payload[1]
-        log.info("Outputs konfiguriert (recipe_id=%d)", self.recipe_id)
+        self.recipe_id = recipe
+        log.info("RTDE: Outputs konfiguriert (recipe_id=%d)", recipe)
 
-        self._send_frame(sock, CONTROL_PACKAGE_START)
-        msg_type, payload = self._recv_non_text(sock)
-        if msg_type != CONTROL_PACKAGE_START or len(payload) < 1 or payload[0] != 1:
-            self._raise_unexpected(
-                CONTROL_PACKAGE_START, msg_type, payload, "waehrend START"
+        send_frame(sock, RTDE_CONTROL_PACKAGE_START)
+        msg_type, payload = recv_non_text(sock)
+        if msg_type != RTDE_CONTROL_PACKAGE_START or len(payload) < 1 or payload[0] != 1:
+            self._unexpected(
+                RTDE_CONTROL_PACKAGE_START,
+                msg_type,
+                payload,
+                "waehrend START",
             )
-        log.info("Datenstrom gestartet")
+        log.info("RTDE: Datenstrom gestartet")
 
-    def _request_version(self, sock: socket.socket, version: int) -> int:
-        self._send_frame(sock, REQUEST_PROTOCOL_VERSION, struct.pack(">H", version))
-        msg_type, payload = self._recv_non_text(sock)
-        if msg_type != PROTOCOL_VERSION_REPLY:
-            self._raise_unexpected(
-                PROTOCOL_VERSION_REPLY, msg_type, payload, "waehrend Versions-Handshake"
+    # ------------------------------------------------------------------
+    def _request_version(self, sock: socket.socket, version: int) -> bool:
+        """Versucht eine Protokollversion zu aktivieren."""
+
+        send_frame(sock, RTDE_REQUEST_PROTOCOL_VERSION, struct.pack(">H", version))
+        msg_type, payload = recv_non_text(sock)
+        if msg_type != RTDE_PROTOCOL_VERSION_REPLY or len(payload) < 1:
+            self._unexpected(
+                RTDE_PROTOCOL_VERSION_REPLY,
+                msg_type,
+                payload,
+                "waehrend Versions-Handshake",
             )
-        if len(payload) < 2:
-            msg = (
-                f"RTDE {self.host}:{self.port}: Versionsantwort zu kurz: "
-                f"{frame_str(msg_type, payload)}"
-            )
-            log.error(msg)
-            raise CommunicationError(msg)
-        accepted = struct.unpack(">H", payload[:2])[0]
-        log.info("Protokollversion %d akzeptiert", accepted)
-        return accepted
+        accepted = payload[0]
+        log.info("RTDE: Protokollversion %d %s", version, "akzeptiert" if accepted else "abgelehnt")
+        return accepted == 1
+
+    # ------------------------------------------------------------------
+    def _unexpected(
+        self, expected: int, msg_type: int, payload: bytes, context: str
+    ) -> None:
+        """Erzeugt eine ausführliche Fehlermeldung."""
+
+        exp_name = type_name(expected)
+        msg = (
+            f"RTDE: erwartet {exp_name}, erhalten {frame_str(msg_type, payload)} {context}"
+        )
+        log.error(msg)
+        raise CommunicationError(msg)
 
 
+# ---------------------------------------------------------------------------
+# Öffentliche Helfer
+# ---------------------------------------------------------------------------
 def read_rtde_pose(
-    host: str, port: int = RTDE_PORT, timeout: float = 3.0
-) -> tuple[float, float, float, float, float, float]:
-    """Komfortfunktion für bestehenden Code."""
-    client = RTDEOneShotClient(host=host, port=port, timeout=timeout)
+    host: str,
+    port: int = RTDE_PORT,
+    timeout: float = 3.0,
+    debug: bool = False,
+) -> Tuple[float, float, float, float, float, float]:
+    """Komfortfunktion zum Lesen der TCP-Pose."""
+
+    client = RTDEOneShotClient(host=host, port=port, timeout=timeout, debug=debug)
     return client.read_pose()
 
 
@@ -272,9 +291,10 @@ def _main() -> None:
     try:
         pose = client.read_pose()
         print("Pose:", pose)
-    except CommunicationError as exc:
-        log.error("Fehler: %s", exc)
+    except CommunicationError as exc:  # pragma: no cover - CLI-Ausgabe
+        log.error("RTDE: Fehler: %s", exc)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - manuelles Ausführen
     _main()
+

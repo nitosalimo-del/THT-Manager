@@ -9,18 +9,20 @@ import pytest
 os.sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from rtde_one_shot import (
-    frame_str,
-    hexdump,
     RTDE_CONTROL_PACKAGE_PAUSE,
     RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS,
     RTDE_CONTROL_PACKAGE_START,
     RTDE_DATA_PACKAGE,
     RTDE_PROTOCOL_VERSION_REPLY,
     RTDE_REQUEST_PROTOCOL_VERSION,
-    RTDE_TEXT_MESSAGE,
+    RTDE_TEXT_MESSAGE_UR,
     RTDE_PORT,
     RTDEOneShotClient,
+    frame_str,
+    hexdump,
     read_rtde_pose,
+    recv_frame,
+    send_frame,
     type_name,
 )
 
@@ -34,22 +36,17 @@ def test_util_functions() -> None:
 
 
 def _send_frame(conn: socket.socket, msg_type: int, payload: bytes = b"") -> None:
-    conn.sendall(struct.pack(">HB", len(payload) + 3, msg_type) + payload)
+    send_frame(conn, msg_type, payload)
 
 
 def _recv_frame(conn: socket.socket) -> tuple[int, bytes]:
-    header = conn.recv(3)
-    if not header:
-        raise ConnectionError("empty header")
-    length, msg_type = struct.unpack(">HB", header)
-    payload = conn.recv(length - 3)
-    return msg_type, payload
+    return recv_frame(conn)
 
 
 def _start_dummy_server(
     pose: tuple[float, ...],
     *,
-    accepted_version: int = 2,
+    accept_version: int = 2,
     send_text: bool = False,
 ) -> threading.Thread:
     def server() -> None:
@@ -62,25 +59,18 @@ def _start_dummy_server(
                 msg_type, payload = _recv_frame(conn)
                 assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
                 if send_text:
-                    _send_frame(conn, RTDE_TEXT_MESSAGE, b"dummy")
-                _send_frame(
-                    conn,
-                    RTDE_PROTOCOL_VERSION_REPLY,
-                    struct.pack(">H", accepted_version),
-                )
-                if accepted_version != struct.unpack(">H", payload)[0]:
-                    # Expect fallback to version 1
+                    _send_frame(conn, RTDE_TEXT_MESSAGE_UR, b"dummy")
+                if accept_version == 2:
+                    _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x01")
+                else:
+                    _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x00")
                     msg_type, payload = _recv_frame(conn)
                     assert msg_type == RTDE_REQUEST_PROTOCOL_VERSION
-                    _send_frame(
-                        conn,
-                        RTDE_PROTOCOL_VERSION_REPLY,
-                        struct.pack(">H", accepted_version),
-                    )
+                    _send_frame(conn, RTDE_PROTOCOL_VERSION_REPLY, b"\x01")
 
                 msg_type, payload = _recv_frame(conn)
                 assert msg_type == RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS
-                _send_frame(conn, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, b"\x01\x05")
+                _send_frame(conn, RTDE_CONTROL_PACKAGE_SETUP_OUTPUTS, b"\x05types")
 
                 msg_type, payload = _recv_frame(conn)
                 assert msg_type == RTDE_CONTROL_PACKAGE_START
@@ -91,7 +81,7 @@ def _start_dummy_server(
                     RTDE_DATA_PACKAGE,
                     b"\x05" + struct.pack(">6d", *pose),
                 )
-
+                conn.settimeout(0.2)
                 try:
                     msg_type, _ = _recv_frame(conn)
                     assert msg_type == RTDE_CONTROL_PACKAGE_PAUSE
@@ -107,15 +97,16 @@ def _start_dummy_server(
 def test_read_rtde_pose() -> None:
     pose = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
     thread = _start_dummy_server(pose, send_text=True)
-    result = read_rtde_pose("127.0.0.1", timeout=1.0)
+    result = read_rtde_pose("127.0.0.1", timeout=1.0, debug=True)
     assert result == pytest.approx(pose)
     thread.join(timeout=0.1)
 
 
 def test_version_fallback() -> None:
     pose = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
-    thread = _start_dummy_server(pose, accepted_version=1)
+    thread = _start_dummy_server(pose, accept_version=1)
     client = RTDEOneShotClient(host="127.0.0.1", timeout=1.0)
     result = client.read_pose()
     assert result == pytest.approx(pose)
     thread.join(timeout=0.1)
+
