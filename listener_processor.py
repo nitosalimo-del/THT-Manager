@@ -6,11 +6,14 @@ from typing import Optional, List, Callable
 from database_manager import DatabaseManager
 from config import Config
 
-WU_RE = re.compile(r"\bWU\d+\b")
+# Unterstützt Produktnummern im Format "WU123" oder "WUBRE123".
+PRODUCT_RE = re.compile(r"\b(?:WU|WUBRE)\d+\b")
+# Rückwärtskompatibler Alias
+WU_RE = PRODUCT_RE
 
 
 def _extract_wu(payload: str) -> Optional[str]:
-    """Extrahiert eine WU-Nummer aus dem Payload."""
+    """Extrahiert eine Produktnummer (WU/WUBRE) aus dem Payload."""
     m = WU_RE.search(payload or "")
     return m.group(0) if m else None
 

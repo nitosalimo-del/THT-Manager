@@ -14,8 +14,15 @@ def test_format_row_with_codes():
     }
     fields = ["Laufende Nummer", "Produktnummer", "Kunde"]
     result = _format_row_as_underscore_string(row, fields)
-    assert result == "LNR:1_PNR:WU123_KND:ACME"
+    assert result == "LaufendeNummer:1_ProduktNr:WU123_Kunde:ACME"
 
 
 def test_format_row_none():
     assert _format_row_as_underscore_string(None) == ""
+
+
+def test_extract_wubre_number():
+    payload = "foo WUBRE1234 bar"
+    from listener_processor import _extract_wu
+
+    assert _extract_wu(payload) == "WUBRE1234"
