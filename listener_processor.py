@@ -21,12 +21,17 @@ def _get_product_row_by_wu(db: DatabaseManager, wu: str) -> Optional[dict]:
 
 
 def _format_row_as_underscore_string(row: dict, fields: List[str] | None = None) -> str:
-    """Formatiert eine Datenbankzeile als Unterstrich-getrennten String."""
+    """Formatiert eine Datenbankzeile als "KEY:WERT"-Paare."""
     if not row:
         return ""
+
     field_order = fields if fields is not None else Config.get_all_fields()
-    vals = [str(row.get(k, "")) for k in field_order]
-    return "_".join(vals)
+    parts: List[str] = []
+    for field in field_order:
+        code = Config.get_field_code(field)
+        val = str(row.get(field, ""))
+        parts.append(f"{code}:{val}")
+    return "_".join(parts)
 
 
 def _send_to_cobot(ip: str, port: int, message: str, read_ok: bool = True, timeout: float = 5.0) -> bool:
