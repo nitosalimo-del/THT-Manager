@@ -77,6 +77,7 @@ def handle_listener_payload(payload: str, db: DatabaseManager, send_ip: str, sen
         if row
         else "NichtVorhanden"
     )
+    message += "END"
 
     # Gesendete Nachricht im Listener-Fenster anzeigen
     if log_event:
