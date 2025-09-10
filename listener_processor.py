@@ -6,8 +6,10 @@ from typing import Optional, List, Callable
 from database_manager import DatabaseManager
 from config import Config
 
-# Unterstützt Produktnummern im Format "WU123" oder "WUBRE123".
-PRODUCT_RE = re.compile(r"\b(?:WU|WUBRE)\d+\b")
+# Unterstützt Produktnummern im Format "WU123", "WUBRE123" sowie
+# Varianten mit optionalem Bindestrich, Kleinschreibung und optionalen
+# Buchstaben am Ende (z.B. "wu-123cu").
+PRODUCT_RE = re.compile(r"\b(?:WU|WUBRE)-?\d+[A-Z]*\b", re.IGNORECASE)
 # Rückwärtskompatibler Alias
 WU_RE = PRODUCT_RE
 
@@ -75,6 +77,7 @@ def handle_listener_payload(payload: str, db: DatabaseManager, send_ip: str, sen
         if row
         else "NichtVorhanden"
     )
+    message += "END"
 
     # Gesendete Nachricht im Listener-Fenster anzeigen
     if log_event:
