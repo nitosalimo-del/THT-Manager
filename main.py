@@ -274,9 +274,20 @@ class ProduktManagerApp(ctk.CTk):
         port_label = ctk.CTkLabel(self.lima_panel, text="LIMA Port")
         port_label.grid(row=1, column=1, padx=5)
         
-        # Listener-Port ist fest 34000 und wird nicht konfigurierbar angezeigt
-        listener_label = ctk.CTkLabel(self.lima_panel, text="Listener Port: 34000")
-        listener_label.grid(row=0, column=2, padx=5, pady=2)
+        # Kamera-Port konfigurierbar (Default 34000)
+        self.listener_port_entry = ctk.CTkEntry(self.lima_panel, width=100)
+        self.listener_port_entry.insert(
+            0,
+            str(
+                self.lima_config.get(
+                    "listener_port", Config.DEFAULT_LIMA_CONFIG["listener_port"]
+                )
+            ),
+        )
+        self.listener_port_entry.grid(row=0, column=2, pady=2, padx=5)
+
+        listener_label = ctk.CTkLabel(self.lima_panel, text="Kamera-Port")
+        listener_label.grid(row=1, column=2, padx=5)
         
         # Send-IP
         self.send_ip_entry = ctk.CTkEntry(self.lima_panel, width=200)
@@ -535,10 +546,9 @@ class ProduktManagerApp(ctk.CTk):
             config = {
                 "ip": self.ip_entry.get(),
                 "port": int(self.port_entry.get()),
-                # Listener-Port ist fest auf 34000 gesetzt
-                "listener_port": 34000,
+                "listener_port": int(self.listener_port_entry.get()),
                 "send_ip": self.send_ip_entry.get(),
-                "send_port": int(self.send_port_entry.get())
+                "send_port": int(self.send_port_entry.get()),
             }
             
             # Validierung
@@ -900,19 +910,17 @@ class ProduktManagerApp(ctk.CTk):
             # Listener-Konfiguration
             send_ip = self.send_ip_entry.get().strip()
             send_port = int(self.send_port_entry.get().strip())
-
-            if hasattr(self, "ip_entry"):
-                camera_ip = self.ip_entry.get().strip()
-            else:
-                camera_ip = self.lima_config.get(
-                    "ip", Config.DEFAULT_LIMA_CONFIG["ip"]
-                )
+            camera_ip = self.ip_entry.get().strip() if hasattr(self, "ip_entry") else self.lima_config.get(
+                "ip", Config.DEFAULT_LIMA_CONFIG["ip"]
+            )
+            camera_port = int(self.listener_port_entry.get().strip())
 
             # Listener-Modus starten mit BEIDEN Callbacks
             self.listener_mode = ListenerMode(
                 send_ip=send_ip,
                 send_port=send_port,
                 camera_ip=camera_ip,
+                camera_port=camera_port,
             )
             success = self.listener_mode.start(
                 self._handle_listener_message,
@@ -924,9 +932,14 @@ class ProduktManagerApp(ctk.CTk):
                 self._show_listener_log_window()  # Korrigierter Methodenname
 
                 self.sidebar_manager.set_listener_active(True)
-                self.status_manager.update_listener_status(True, f"{send_ip}:{send_port}")
-                self.message_handler.show_info("Listener gestartet", "Lauscht auf Port 34000")
-                self.logger.info("Listener-Modus gestartet auf Port 34000")
+                self.status_manager.update_listener_status(True, f"{camera_ip}:{camera_port}")
+                self.message_handler.show_info(
+                    "Listener gestartet",
+                    f"Verbindung zur Kamera {camera_ip}:{camera_port}",
+                )
+                self.logger.info(
+                    "Listener-Modus gestartet als Client zu %s:%d", camera_ip, camera_port
+                )
             else:
                 self.message_handler.show_error("Fehler", "Listener-Modus konnte nicht gestartet werden")
 
