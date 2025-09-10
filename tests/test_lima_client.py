@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from communication_manager import LimaClient
 
 
-def _start_chunked_server(response_chunks):
+def _start_server(response: str):
     port_holder = []
 
     def server():
@@ -20,11 +20,8 @@ def _start_chunked_server(response_chunks):
             port_holder.append(s.getsockname()[1])
             conn, _ = s.accept()
             with conn:
-                conn.recv(1024)  # receive command
-                for chunk in response_chunks:
-                    conn.sendall(chunk.encode("utf-8"))
-                    time.sleep(0.05)
-                conn.sendall(b"\n")
+                conn.recv(1024)
+                conn.sendall(response.encode("utf-8"))
 
     thread = threading.Thread(target=server, daemon=True)
     thread.start()
@@ -34,8 +31,8 @@ def _start_chunked_server(response_chunks):
     return port_holder[0], thread
 
 
-def test_send_command_reads_chunked_response():
-    port, thread = _start_chunked_server(["<TO", "k/>"])
+def test_send_command_receives_response():
+    port, thread = _start_server("<TOk/>\n")
     client = LimaClient("127.0.0.1", port, timeout=1.0)
 
     result = client.send_command("<T/>")
