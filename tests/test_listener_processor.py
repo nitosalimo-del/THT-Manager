@@ -26,3 +26,20 @@ def test_extract_wubre_number():
     from listener_processor import _extract_wu
 
     assert _extract_wu(payload) == "WUBRE1234"
+
+
+def test_extract_wu_lowercase_with_dash():
+    payload = "foo wubre-1234 bar"
+    from listener_processor import _extract_wu
+
+    assert _extract_wu(payload) == "wubre-1234"
+
+
+def test_extract_wu_with_trailing_letters():
+    payload = (
+        "13:47:07.405 \u2b07\ufe0f [MESSAGE_RECEIVED] 10.3.218.3: "
+        "C:0F:6P:WU0000003CU:KundeBN:Arbeitsplatz 3"
+    )
+    from listener_processor import _extract_wu
+
+    assert _extract_wu(payload) == "WU0000003CU"
