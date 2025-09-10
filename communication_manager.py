@@ -303,6 +303,22 @@ class ListenerMode:
 
         self.logger = logging.getLogger(__name__)
 
+    @staticmethod
+    def _split_messages(buffer: str) -> Tuple[List[str], str]:
+        """Zerlegt Buffer anhand von Terminatoren und liefert Nachrichten und Rest."""
+        terminators = ["END", "\n", "\r"]
+        messages: List[str] = []
+        while True:
+            positions = [(buffer.find(t), t) for t in terminators if t in buffer]
+            if not positions:
+                break
+            pos, term = min(positions, key=lambda x: x[0])
+            message = buffer[:pos].strip()
+            buffer = buffer[pos + len(term) :]
+            if message:
+                messages.append(message)
+        return messages, buffer
+
     def start(
         self,
         message_handler: Callable[[str, str], None],
@@ -432,15 +448,13 @@ class ListenerMode:
                         if not data:
                             raise ConnectionError("Verbindung zur Kamera getrennt")
                         buffer += data.decode("utf-8", errors="ignore")
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            line = line.strip()
-                            if line:
-                                self._log_event(
-                                    "MESSAGE_RECEIVED", line, self.camera_ip
-                                )
-                                if self.message_handler:
-                                    self.message_handler(line, self.camera_ip)
+                        messages, buffer = self._split_messages(buffer)
+                        for line in messages:
+                            self._log_event(
+                                "MESSAGE_RECEIVED", line, self.camera_ip
+                            )
+                            if self.message_handler:
+                                self.message_handler(line, self.camera_ip)
                     except socket.timeout:
                         continue
 
