@@ -3,6 +3,7 @@ Zentralisierte Konfiguration für den THT-Produktmanager
 """
 from typing import Dict, Any
 import os
+import re
 
 class Config:
     # Datenbankeinstellungen
@@ -52,13 +53,49 @@ class Config:
     POSITION_FIELDS = [
         "PosPCB_0", "PosPCB_1", "PosPCB_2", "PosPCB_3", "PosPCB_4"
     ]
+
+    # Kurzbezeichnungen für Felder (für Cobot-Kommunikation)
+    FIELD_CODES: Dict[str, str] = {
+        "Laufende Nummer": "LNR",
+        "Produktnummer": "PNR",
+        "Kunde": "KND",
+        "Notizen": "NOT",
+        "Frame Width (mm)": "FW",
+        "Frame Height (mm)": "FH",
+        "PCB_0 Top": "PCB0T",
+        "PCB_1 Back": "PCB1B",
+        "PCB_2 Right": "PCB2R",
+        "PCB_3 Front": "PCB3F",
+        "PCB_4 Left": "PCB4L",
+        "AF Breite": "AFB",
+        "AF Höhe": "AFH",
+        "AF Tiefe": "AFT",
+        "AI angelegt": "AIAN",
+        "AI Zeitstempel": "AITS",
+        "Cobot angelegt": "COAN",
+        "Cobot Zeitstempel": "COTS",
+        "PosPCB_0": "POS0",
+        "PosPCB_1": "POS1",
+        "PosPCB_2": "POS2",
+        "PosPCB_3": "POS3",
+        "PosPCB_4": "POS4",
+    }
     
     @classmethod
     def get_all_fields(cls) -> list:
         """Gibt alle Felder in der korrekten Reihenfolge zurück"""
-        return (cls.BASIC_FIELDS + cls.DIMENSION_FIELDS + 
-                cls.PCB_FIELDS + cls.AF_FIELDS + cls.EXTRA_FIELDS + 
+        return (cls.BASIC_FIELDS + cls.DIMENSION_FIELDS +
+                cls.PCB_FIELDS + cls.AF_FIELDS + cls.EXTRA_FIELDS +
                 cls.POSITION_FIELDS)
+
+    @classmethod
+    def get_field_code(cls, field: str) -> str:
+        """Liefert die Kurzbezeichnung eines Felds.
+
+        Falls keine explizite Abkürzung vorhanden ist, wird eine generische
+        Variante (Großbuchstaben ohne Sonderzeichen) zurückgegeben.
+        """
+        return cls.FIELD_CODES.get(field, re.sub(r"\W+", "", field).upper())
     
     # LIMA-Kommandos
     LIMA_COMMANDS = {
