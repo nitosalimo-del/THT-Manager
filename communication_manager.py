@@ -47,18 +47,45 @@ class LimaClient:
                 full_command = command + "\n"
                 sock.send(full_command.encode('utf-8'))
                 
-                # Antwort empfangen (bis zu 4KB)
-                response = sock.recv(4096).decode('utf-8').strip()
-                self.logger.debug(f"LIMA Kommando: {command} -> Antwort: {response}")
-                
+                # Antwort zeilenweise lesen
+                try:
+                    with sock.makefile("r", encoding="utf-8", newline="\n") as stream:
+                        response_parts = []
+                        while True:
+                            line = stream.readline()
+                            if line == "":
+                                raise CommunicationError(
+                                    f"Verbindung beendet während Kommando: {command}"
+                                )
+                            response_parts.append(line)
+                            if line.endswith("\n"):
+                                break
+                    response = "".join(response_parts).strip()
+                except socket.timeout as exc:
+                    raise CommunicationError(
+                        f"Timeout beim Lesen der Antwort: {command}"
+                    ) from exc
+
+                self.logger.debug(
+                    "LIMA Kommando: %s -> Antwort: %s", command, response
+                )
+
                 return response
-        
-        except socket.timeout:
-            raise CommunicationError(f"Timeout beim Senden des Kommandos: {command}")
-        except socket.error as e:
-            raise CommunicationError(f"Socket-Fehler bei Kommando {command}: {e}")
+
+        except socket.timeout as exc:
+            raise CommunicationError(
+                f"Timeout beim Senden des Kommandos: {command}"
+            ) from exc
+        except (socket.error, OSError) as e:
+            raise CommunicationError(
+                f"Socket-Fehler bei Kommando {command}: {e}"
+            ) from e
+        except CommunicationError:
+            raise
         except Exception as e:
-            raise CommunicationError(f"Unerwarteter Fehler bei Kommando {command}: {e}")
+            raise CommunicationError(
+                f"Unerwarteter Fehler bei Kommando {command}: {e}"
+            ) from e
     
     def parse_lima_response(self, response: str) -> Dict[str, str]:
         """Parst LIMA XML-Response"""
